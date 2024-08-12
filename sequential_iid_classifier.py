@@ -1,7 +1,7 @@
 import torch
 from tqdm import tqdm
 from torch_geometric.loader import DataLoader
-from sequential_markov_classifier import get_edge_subgraphs
+from sequential_markov_classifier import get_edge_subgraphs, calc_iid_eta
 
 def classify_edges(classifier, data):
     edge_subgraphs = get_edge_subgraphs(data)
@@ -14,23 +14,9 @@ def classify_edges(classifier, data):
     data.z = z
     return data
 
-def calc_iid_eta(loader, num_z, label):
-    label_counter = torch.zeros(num_z)
-    edges_counter = 0
-    for data in tqdm(loader, desc=f'calculating eta for class {label}'):
-        if data.y != label:
-            continue
-        for z in data.z:
-            label_counter[z] += 1
-            edges_counter += 1
-            assert torch.sum(label_counter) == edges_counter
-    iid_eta = label_counter / edges_counter
-    assert torch.allclose(torch.sum(iid_eta), torch.ones(1))
-    return iid_eta, label_counter
-
 def get_iid_eta(dataset, num_classes, num_z, load=False):
     if load:
-        iid_eta = torch.load("iid_eta.pt")
+        iid_eta = torch.load("iid_eta.pt", weights_only=True)
         return iid_eta, None
     else:
         loader = DataLoader(dataset, batch_size=1, shuffle=True)

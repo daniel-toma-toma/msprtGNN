@@ -7,6 +7,7 @@ import torch.nn as nn
 from sequential_test import sequential_test
 import matplotlib.pyplot as plt
 from sequential_markov_classifier import get_alpha_and_eta, sequential_markov, z_classify_dataset
+from quickstop import get_quickstop_alpha_and_eta, quickstop
 from torch_geometric.loader import DataLoader
 from sequential_iid_classifier import get_iid_eta, sequential_iid
 from weibo_dataset import get_weibo_dataset, get_weibo_dataloader
@@ -140,11 +141,13 @@ def print_dataset_stats(dataset):
     total_graphs = len(dataset)
     total_edges = 0
     total_vertices = 0
+    vertices_mul = 1
     label_counts = {}
     depths = []
     for data in dataset:
         total_edges += data.num_edges
         total_vertices += data.num_nodes
+        vertices_mul *= (data.num_nodes ** (1/total_graphs))
         label = data.y.item()
         if label not in label_counts:
             label_counts[label] = 1
@@ -154,12 +157,14 @@ def print_dataset_stats(dataset):
         depths += [depth]
     avg_edges_per_graph = total_edges / total_graphs
     avg_vertices_per_graph = total_vertices / total_graphs
+    geom_mean_nodes_per_graph = vertices_mul
     print(f'Average number of edges per graph: {avg_edges_per_graph}')
     print(f'Average number of vertices per graph: {avg_vertices_per_graph}')
+    print(f'geom Average number of vertices per graph: {geom_mean_nodes_per_graph}')
     print(f'Number of graphs per label: {label_counts}')
     print(f'maximal depth: {np.max(depths)}')
     print(f'average depth: {np.mean(depths)}')
-    return avg_vertices_per_graph
+    return geom_mean_nodes_per_graph
 
 def get_stationary_transition(P):
     n = P.shape[0]
@@ -173,31 +178,43 @@ def get_stationary_transition(P):
 def offline_msprt_algo(train_data, test_data, gnn_classifier, num_classes, num_z, device):
     z_classified_train_dataset = z_classify_dataset(train_data, gnn_classifier, num_classes, num_z,
                                                     name="z_class_train_dataset.pt", load=load_z_dataset)
+    alpha, eta, eta_iid = get_alpha_and_eta(z_classified_train_dataset, device, num_classes, num_z, load=load_alpha)
+    naive_iid_model = sequential_iid(num_classes, eta_iid)
+    markov_model = sequential_markov(num_classes, alpha, eta)
+    #print(eta_iid)
     z_classified_test_dataset = z_classify_dataset(test_data, gnn_classifier, num_classes, num_z,
                                                    name="z_class_test_dataset.pt", load=load_z_dataset)
     test_loader = DataLoader(z_classified_test_dataset, batch_size=1, shuffle=True)
-    eta_iid, iid_label_counter = get_iid_eta(z_classified_train_dataset, num_classes, num_z, load=load_alpha)
-    alpha, eta = get_alpha_and_eta(z_classified_train_dataset, device, num_classes, num_z, eta_iid, load=load_alpha)
-    naive_iid_model = sequential_iid(num_classes, eta_iid)
-    markov_model = sequential_markov(num_classes, alpha, eta)
-    print(eta_iid)
     eta_iid_test, iid_label_counter_test = get_iid_eta(z_classified_test_dataset, num_classes, num_z, load=load_alpha)
-    plot_eta_iid(eta_iid_test, num_classes)
-    print(eta)
-    print(alpha)
+    #plot_eta_iid(eta_iid_test, num_classes)
+    #print(eta)
+    #print(alpha)
     for i in range(num_classes):
         stationary_p = get_stationary_transition(alpha[i])
-        print(stationary_p)
+        #print(stationary_p)
     return markov_model, naive_iid_model, test_loader
+
+def offline_quickstop_algo(train_data, test_data, gnn_classifier, num_classes, num_z, device):
+    z_classified_train_dataset = z_classify_dataset(train_data, gnn_classifier, num_classes, num_z,
+                                                    name="z_class_train_dataset.pt", load=True)
+    quick_alpha, quick_eta = get_quickstop_alpha_and_eta(z_classified_train_dataset, device, num_classes, num_z, load=load)
+    quickstop_model = quickstop(num_classes, quick_alpha, quick_eta)
+    #print("quickstop:")
+    #print(quick_eta)
+    #print(quick_alpha)
+    for i in range(num_classes):
+        stationary_p = get_stationary_transition(quick_eta[i])
+        #print(stationary_p)
+    return quickstop_model
 
 np.set_printoptions(suppress=True)
 torch.set_printoptions(sci_mode=False)
 
-load = False
+load = True
 load_gnn = load
 load_z_dataset = load
 load_alpha = load
-dataset = "upfd"
+dataset = "weibo"
 
 def main():
     if dataset == "upfd":
@@ -215,30 +232,33 @@ def main():
         train_data, val_data, test_data, num_features = get_weibo_dataset()
         train_data += val_data
         train_loader, val_loader, test_loader = get_weibo_dataloader(train_data, val_data, test_data, batch_size=32)
-        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.1, 16, 0.00000
-        gnn_threshold = 0.6
-        msprt_threshold = 0.99999
-        eps = 0.1
+        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 64, 0.000001
+        gnn_threshold = 0.5
+        msprt_threshold = 0.9999
+        quickstop_threshold = 0.8
     print(f'Train dataset size: {len(train_data)}, Validation dataset size: {len(val_data)}, Test dataset size: {len(test_data)}')
     T = print_dataset_stats(train_data + val_data + test_data)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     gnn_classifier = GIN_markov(num_features, hidden_dim=hidden_dim, output_dim=num_classes).to(device)
     if not load_gnn:
         train_loop(gnn_classifier, train_loader, val_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda)
-        gnn_classifier.T = torch.nn.Parameter(torch.tensor(T))
-    gnn_classifier.pool = global_add_pool
     gnn_classifier.load_state_dict(torch.load(dataset + '_model.pt'))
+    gnn_classifier.T = T
+    gnn_classifier.pool = global_add_pool
     test_acc = test(gnn_classifier, test_loader, device)
     print(f'Loaded model. test acc: {test_acc:.4f}')
     print(f'GINConv eps: {gnn_classifier.conv1.eps.item():.4f}')
     if True:
         markov_model, naive_iid_model, test_loader = offline_msprt_algo(train_data, test_data, gnn_classifier, num_classes, num_z, device)
+        quickstop_model = offline_quickstop_algo(train_data, test_data, gnn_classifier, num_classes, num_z, device)
+    print("quickstop model:")
+    sequential_test(quickstop_model, device, test_loader, pvalue=quickstop_threshold)
     print("naive iid model:")
     sequential_test(naive_iid_model, device, test_loader, pvalue=msprt_threshold)
     print("markov model:")
     sequential_test(markov_model, device, test_loader, pvalue=msprt_threshold)
     print("GNN model:")
-    sequential_test(gnn_classifier, device, test_loader, pvalue=gnn_threshold, eps=eps)
+    sequential_test(gnn_classifier, device, test_loader, pvalue=gnn_threshold)
 
 
 if __name__ == '__main__':

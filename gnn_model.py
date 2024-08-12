@@ -19,7 +19,8 @@ class GIN_markov(torch.nn.Module):
         )
         self.conv1 = GINConv(nn, train_eps=True, eps=2.0)
         self.pool = global_mean_pool
-        self.T = torch.nn.Parameter(torch.tensor(1.0))
+        #self.T = torch.nn.Parameter(torch.tensor(1.0))
+        self.T = 1.0
 
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch

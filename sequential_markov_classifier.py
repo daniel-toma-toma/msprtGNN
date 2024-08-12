@@ -3,7 +3,6 @@ from tqdm import tqdm
 from collections import defaultdict
 from torch_geometric.data import Data, Batch
 from torch_geometric.loader import DataLoader
-import torch.nn.functional as F
 
 def get_incoming_edge_index(subgraph, node):
     edge_index = subgraph.edge_index
@@ -85,7 +84,7 @@ def classify_edges(classifier, data, num_classes, num_z):
 
 def z_classify_dataset(dataset, classifier, num_classes, num_z, name="z_class_dataset.pt", load=False):
     if load:
-        z_classified_dataset = torch.load(name)
+        z_classified_dataset = torch.load(name, weights_only=False)
     else:
         z_classified_dataset = []
         for i in tqdm(range(len(dataset)), desc=f'z-classifying dataset'):
@@ -130,14 +129,23 @@ def is_row_stochastic(matrix):
     ones = torch.ones_like(row_sums)
     return torch.allclose(row_sums, ones)
 
-def init_transition_counter(eta_iid, num_z):
+def mixing_time(transition_matrix, epsilon=0.01):
+    eigenvalues, _ = torch.linalg.eig(transition_matrix)
+    lambda_2 = abs(eigenvalues[1])
+    spectral_gap = 1 - lambda_2
+    if spectral_gap == 0:
+        raise ValueError(
+            "Spectral gap is zero, indicating a problem with the transition matrix (e.g., it's reducible or periodic).")
+    stationary_distribution = torch.linalg.matrix_power(transition_matrix, 1000)[0]  # Approximating the stationary distribution
+    pi_min = min(stationary_distribution)
+    mixing_time = (1 / spectral_gap) * torch.log(1 / (epsilon * pi_min))
+    return mixing_time
+def init_transition_counter(eta_iid, num_z, s=10):
     transition_counts = torch.zeros((num_z, num_z), dtype=torch.float32)
-    s = 10
     transition_counts[:] = eta_iid * s
     return transition_counts
-
 def calc_alpha(loader, device, num_z, label, eta_iid, num_classes):
-    transition_counts = init_transition_counter(eta_iid, num_z)
+    transition_counts = init_transition_counter(eta_iid, num_z, 1/(10*num_z))
     for data in tqdm(loader, desc=f'calculating alpha for class {label}'):
         if data.y != label:
             continue
@@ -149,6 +157,8 @@ def calc_alpha(loader, device, num_z, label, eta_iid, num_classes):
         if row_sums[i] == 0:
             transition_matrix[i,:] = torch.ones(num_z) / num_z
     assert is_row_stochastic(transition_matrix)
+    mix_time = mixing_time(transition_matrix, epsilon=0.01)
+    print(f"mix_time: {mix_time}")
     return transition_matrix
 
 def calc_eta(loader, device, num_z, label):
@@ -168,21 +178,40 @@ def calc_eta(loader, device, num_z, label):
     assert torch.allclose(torch.sum(eta_z), torch.ones(1))
     return eta_z, label_counter
 
-def get_alpha_and_eta(dataset, device, num_classes, num_z, eta_iid, load=False):
+def calc_iid_eta(loader, num_z, label):
+    label_counter = torch.zeros(num_z)
+    edges_counter = 0
+    for data in tqdm(loader, desc=f'calculating eta for class {label}'):
+        if data.y != label:
+            continue
+        for z in data.z:
+            label_counter[z] += 1
+            edges_counter += 1
+            assert torch.sum(label_counter) == edges_counter
+    iid_eta = label_counter / edges_counter
+    assert torch.allclose(torch.sum(iid_eta), torch.ones(1))
+    return iid_eta, label_counter
+
+def get_alpha_and_eta(dataset, device, num_classes, num_z, eta_iid=None, load=False):
     if load:
-        alpha = torch.load("alpha.pt")
-        eta = torch.load("eta.pt")
-        return alpha, eta
+        alpha = torch.load("alpha.pt", weights_only=True)
+        eta = torch.load("eta.pt", weights_only=True)
+        iid_eta = torch.load("iid_eta.pt", weights_only=True)
+        return alpha, eta, iid_eta
     else:
         loader = DataLoader(dataset, batch_size=1, shuffle=True)
         alpha = torch.zeros((num_classes, num_z, num_z))
         eta = torch.zeros((num_classes, num_z))
+        iid_eta = torch.zeros((num_classes, num_z))
+        iid_label_counter = torch.zeros((num_classes, num_z))
         for label in range(num_classes):
+            iid_eta[label], iid_label_counter[label] = calc_iid_eta(loader, num_z, label)
+            alpha[label] = calc_alpha(loader, device, num_z, label, iid_label_counter[label], num_classes)
             eta[label], label_counter = calc_eta(loader, device, num_z, label)
-            alpha[label] = calc_alpha(loader, device, num_z, label, eta_iid[label], num_classes)
+        torch.save(iid_eta, "iid_eta.pt")
         torch.save(alpha, "alpha.pt")
         torch.save(eta, "eta.pt")
-        return alpha, eta
+        return alpha, eta, eta_iid
 
 
 class sequential_markov(torch.nn.Module):
