@@ -1,6 +1,6 @@
 import torch
 from upfd_combined_dataset import get_combined_upfd_dataloader, get_combined_upfd_dataset
-from gnn_model import Net, GCN_markov, UPFDNet, GCN_markov2, GIN_markov
+from gnn_model import GIN_markov
 import numpy as np
 from sklearn.metrics import classification_report, recall_score
 import torch.nn as nn
@@ -12,11 +12,7 @@ from sequential_iid_classifier import get_iid_eta, sequential_iid
 from weibo_dataset import get_weibo_dataset, get_weibo_dataloader
 import networkx as nx
 from torch_geometric.utils import to_networkx
-from torch_geometric.nn import  global_add_pool
-
-def l1_regularization(model, lambda_l1):
-    l1_norm = sum(p.abs().sum() for p in model.fc1.parameters())
-    return lambda_l1 * l1_norm
+from torch_geometric.nn import global_add_pool
 
 def train(model, optimizer, train_loader, device, l1_lambda=0.0):
     model.train()
@@ -83,7 +79,7 @@ def tune_hyperparams(train_loader, val_loader, test_loader, device, num_features
     for lr in lrs:
         for weight_decay in weight_decays:
             print(f'lr {lr:.4f}, decay: {weight_decay:.4f}')
-            model = GCN_markov(num_features, output_dim=num_classes).to(device)
+            model = GIN_markov(num_features, output_dim=num_classes).to(device)
             train_loop(model, train_loader, val_loader, test_loader, device, lr, weight_decay)
             val_acc = test(model, val_loader, device)
             x += [lr]
@@ -116,7 +112,6 @@ def maximal_distance_from_first_node(data, start_node=0):
 
 def plot_eta_iid(eta_iid, num_classes):
     if num_classes == 4:
-        #x_axis = [0.1, 0.2, 0.3, 1.0, 1.2, 1.3, 2.0, 2.1, 2.3, 3.0, 3.1, 3.2]
         x_axis = ["0,1", "0,2", "0,3", "1,0", "1,2", "1,3",
                   "2,0", "2,1", "2,3", "3,0", "3,1", "3,2"]
     elif num_classes == 3:
@@ -140,9 +135,6 @@ def plot_eta_iid(eta_iid, num_classes):
         plt.show()
     for i in range(len(eta_iid)):
         print((i, eta_iid[i]))
-
-    #print(eta_iid)
-    #print(x_indices)
 
 def print_dataset_stats(dataset):
     total_graphs = len(dataset)
@@ -178,6 +170,26 @@ def get_stationary_transition(P):
     pi = np.linalg.lstsq(A, b, rcond=None)[0]
     return pi
 
+def offline_msprt_algo(train_data, test_data, gnn_classifier, num_classes, num_z, device):
+    z_classified_train_dataset = z_classify_dataset(train_data, gnn_classifier, num_classes, num_z,
+                                                    name="z_class_train_dataset.pt", load=load_z_dataset)
+    z_classified_test_dataset = z_classify_dataset(test_data, gnn_classifier, num_classes, num_z,
+                                                   name="z_class_test_dataset.pt", load=load_z_dataset)
+    test_loader = DataLoader(z_classified_test_dataset, batch_size=1, shuffle=True)
+    eta_iid, iid_label_counter = get_iid_eta(z_classified_train_dataset, num_classes, num_z, load=load_alpha)
+    alpha, eta = get_alpha_and_eta(z_classified_train_dataset, device, num_classes, num_z, eta_iid, load=load_alpha)
+    naive_iid_model = sequential_iid(num_classes, eta_iid)
+    markov_model = sequential_markov(num_classes, alpha, eta)
+    print(eta_iid)
+    eta_iid_test, iid_label_counter_test = get_iid_eta(z_classified_test_dataset, num_classes, num_z, load=load_alpha)
+    plot_eta_iid(eta_iid_test, num_classes)
+    print(eta)
+    print(alpha)
+    for i in range(num_classes):
+        stationary_p = get_stationary_transition(alpha[i])
+        print(stationary_p)
+    return markov_model, naive_iid_model, test_loader
+
 np.set_printoptions(suppress=True)
 torch.set_printoptions(sci_mode=False)
 
@@ -193,9 +205,8 @@ def main():
         num_z = num_classes * (num_classes-1)
         train_data, val_data, test_data, num_features = get_combined_upfd_dataset(num_classes)
         train_loader, val_loader, test_loader = get_combined_upfd_dataloader(train_data, val_data, test_data, batch_size=32)
-        #lr, weight_decay, hidden_dim = 0.005, 0.01, 256
-        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.01, 512, 0.00001
-        gnn_threshold = 0.96
+        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 512, 0.000001
+        gnn_threshold = 0.99
         eps = 1e-10
         msprt_threshold = 0.999999
     elif dataset == "weibo":
@@ -214,32 +225,14 @@ def main():
     gnn_classifier = GIN_markov(num_features, hidden_dim=hidden_dim, output_dim=num_classes).to(device)
     if not load_gnn:
         train_loop(gnn_classifier, train_loader, val_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda)
-        gnn_classifier.pool = global_add_pool
-        T = torch.nn.Parameter(torch.tensor(T))
-        gnn_classifier.T = T
-        #train_loop(gnn_classifier, train_loader, val_loader, test_loader, device, lr, weight_decay, dataset)
+        gnn_classifier.T = torch.nn.Parameter(torch.tensor(T))
     gnn_classifier.pool = global_add_pool
     gnn_classifier.load_state_dict(torch.load(dataset + '_model.pt'))
     test_acc = test(gnn_classifier, test_loader, device)
     print(f'Loaded model. test acc: {test_acc:.4f}')
     print(f'GINConv eps: {gnn_classifier.conv1.eps.item():.4f}')
     if True:
-        z_classified_train_dataset = z_classify_dataset(train_data, gnn_classifier, num_classes, num_z, name="z_class_train_dataset.pt", load=load_z_dataset)
-        z_classified_test_dataset = z_classify_dataset(test_data, gnn_classifier, num_classes, num_z, name="z_class_test_dataset.pt", load=load_z_dataset)
-        test_loader = DataLoader(z_classified_test_dataset, batch_size=1, shuffle=True)
-        eta_iid, iid_label_counter = get_iid_eta(z_classified_train_dataset, num_classes, num_z, load=load_alpha)
-        alpha, eta = get_alpha_and_eta(z_classified_train_dataset, device, num_classes, num_z, eta_iid, load=load_alpha)
-        naive_iid_model = sequential_iid(num_classes, eta_iid)
-        markov_model = sequential_markov(num_classes, alpha, eta)
-        print(eta_iid)
-        eta_iid_test, iid_label_counter_test = get_iid_eta(z_classified_test_dataset, num_classes, num_z, load=load_alpha)
-        plot_eta_iid(eta_iid_test, num_classes)
-        print(eta)
-        print(alpha)
-        for i in range(num_classes):
-            stationary_p = get_stationary_transition(alpha[i])
-            print(stationary_p)
-    #0.9999
+        markov_model, naive_iid_model, test_loader = offline_msprt_algo(train_data, test_data, gnn_classifier, num_classes, num_z, device)
     print("naive iid model:")
     sequential_test(naive_iid_model, device, test_loader, pvalue=msprt_threshold)
     print("markov model:")
