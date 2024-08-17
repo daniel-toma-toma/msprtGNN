@@ -14,6 +14,7 @@ from weibo_dataset import get_weibo_dataset, get_weibo_dataloader
 import networkx as nx
 from torch_geometric.utils import to_networkx
 from torch_geometric.nn import global_add_pool
+from torch.utils.data import Subset, random_split
 
 def train(model, optimizer, train_loader, device, l1_lambda=0.0):
     model.train()
@@ -141,6 +142,7 @@ def print_dataset_stats(dataset):
     total_graphs = len(dataset)
     total_edges = 0
     total_vertices = 0
+    total_harmonic = 0
     vertices_mul = 1
     label_counts = {}
     depths = []
@@ -148,6 +150,7 @@ def print_dataset_stats(dataset):
         total_edges += data.num_edges
         total_vertices += data.num_nodes
         vertices_mul *= (data.num_nodes ** (1/total_graphs))
+        total_harmonic += 1 / data.num_nodes
         label = data.y.item()
         if label not in label_counts:
             label_counts[label] = 1
@@ -158,13 +161,15 @@ def print_dataset_stats(dataset):
     avg_edges_per_graph = total_edges / total_graphs
     avg_vertices_per_graph = total_vertices / total_graphs
     geom_mean_nodes_per_graph = vertices_mul
+    harmonic_mean = total_graphs / total_harmonic
     print(f'Average number of edges per graph: {avg_edges_per_graph}')
     print(f'Average number of vertices per graph: {avg_vertices_per_graph}')
     print(f'geom Average number of vertices per graph: {geom_mean_nodes_per_graph}')
+    print(f'harmonic_mean of vertices per graph: {harmonic_mean}')
     print(f'Number of graphs per label: {label_counts}')
     print(f'maximal depth: {np.max(depths)}')
     print(f'average depth: {np.mean(depths)}')
-    return geom_mean_nodes_per_graph
+    return harmonic_mean
 
 def get_stationary_transition(P):
     n = P.shape[0]
@@ -178,8 +183,8 @@ def get_stationary_transition(P):
 def offline_msprt_algo(train_data, test_data, gnn_classifier, num_classes, num_z, device):
     z_classified_train_dataset = z_classify_dataset(train_data, gnn_classifier, num_classes, num_z,
                                                     name="z_class_train_dataset.pt", load=load_z_dataset)
-    alpha, eta, eta_iid = get_alpha_and_eta(z_classified_train_dataset, device, num_classes, num_z, load=load_alpha)
-    naive_iid_model = sequential_iid(num_classes, eta_iid)
+    alpha, eta, iid_eta = get_alpha_and_eta(z_classified_train_dataset, device, num_classes, num_z, load=load_alpha)
+    naive_iid_model = sequential_iid(num_classes, iid_eta)
     markov_model = sequential_markov(num_classes, alpha, eta)
     #print(eta_iid)
     z_classified_test_dataset = z_classify_dataset(test_data, gnn_classifier, num_classes, num_z,
@@ -199,12 +204,8 @@ def offline_quickstop_algo(train_data, test_data, gnn_classifier, num_classes, n
                                                     name="z_class_train_dataset.pt", load=True)
     quick_alpha, quick_eta = get_quickstop_alpha_and_eta(z_classified_train_dataset, device, num_classes, num_z, load=load)
     quickstop_model = quickstop(num_classes, quick_alpha, quick_eta)
-    #print("quickstop:")
-    #print(quick_eta)
-    #print(quick_alpha)
     for i in range(num_classes):
         stationary_p = get_stationary_transition(quick_eta[i])
-        #print(stationary_p)
     return quickstop_model
 
 np.set_printoptions(suppress=True)
@@ -221,19 +222,22 @@ def main():
         num_classes = 4
         num_z = num_classes * (num_classes-1)
         train_data, val_data, test_data, num_features = get_combined_upfd_dataset(num_classes)
+        train_data += val_data
+        val_data = train_data
         train_loader, val_loader, test_loader = get_combined_upfd_dataloader(train_data, val_data, test_data, batch_size=32)
         lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 512, 0.000001
-        gnn_threshold = 0.99
-        eps = 1e-10
+        gnn_threshold = 0.95
         msprt_threshold = 0.999999
+        quickstop_threshold = 0.9
     elif dataset == "weibo":
         num_classes = 3
         num_z = num_classes * (num_classes-1)
         train_data, val_data, test_data, num_features = get_weibo_dataset()
         train_data += val_data
+        val_data = train_data
         train_loader, val_loader, test_loader = get_weibo_dataloader(train_data, val_data, test_data, batch_size=32)
         lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 64, 0.000001
-        gnn_threshold = 0.5
+        gnn_threshold = 0.8
         msprt_threshold = 0.9999
         quickstop_threshold = 0.8
     print(f'Train dataset size: {len(train_data)}, Validation dataset size: {len(val_data)}, Test dataset size: {len(test_data)}')
@@ -243,20 +247,20 @@ def main():
     if not load_gnn:
         train_loop(gnn_classifier, train_loader, val_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda)
     gnn_classifier.load_state_dict(torch.load(dataset + '_model.pt'))
-    gnn_classifier.T = T
+    gnn_classifier.T = T / 4
     gnn_classifier.pool = global_add_pool
     test_acc = test(gnn_classifier, test_loader, device)
     print(f'Loaded model. test acc: {test_acc:.4f}')
     print(f'GINConv eps: {gnn_classifier.conv1.eps.item():.4f}')
     if True:
-        markov_model, naive_iid_model, test_loader = offline_msprt_algo(train_data, test_data, gnn_classifier, num_classes, num_z, device)
-        quickstop_model = offline_quickstop_algo(train_data, test_data, gnn_classifier, num_classes, num_z, device)
-    print("quickstop model:")
-    sequential_test(quickstop_model, device, test_loader, pvalue=quickstop_threshold)
-    print("naive iid model:")
-    sequential_test(naive_iid_model, device, test_loader, pvalue=msprt_threshold)
-    print("markov model:")
-    sequential_test(markov_model, device, test_loader, pvalue=msprt_threshold)
+        markov_model, naive_iid_model, test_loader = offline_msprt_algo(val_data, test_data, gnn_classifier, num_classes, num_z, device)
+        quickstop_model = offline_quickstop_algo(val_data, test_data, gnn_classifier, num_classes, num_z, device)
+        print("quickstop model:")
+        sequential_test(quickstop_model, device, test_loader, pvalue=quickstop_threshold)
+        print("naive iid model:")
+        sequential_test(naive_iid_model, device, test_loader, pvalue=msprt_threshold)
+        print("markov model:")
+        sequential_test(markov_model, device, test_loader, pvalue=msprt_threshold)
     print("GNN model:")
     sequential_test(gnn_classifier, device, test_loader, pvalue=gnn_threshold)
 

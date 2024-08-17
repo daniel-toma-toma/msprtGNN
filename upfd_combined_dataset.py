@@ -33,11 +33,11 @@ def load_and_relabel(dataset_name, label_mapping):
     feature = 'content'
     transform = None
     train_data = UPFD(root='data', feature=feature, name=dataset_name, split='train', transform=transform)
-    val_data = UPFD(root='data', feature=feature, name=dataset_name, split='val', transform=transform)
-    test_data = UPFD(root='data', feature=feature, name=dataset_name, split='test', transform=transform)
+    test_data = UPFD(root='data', feature=feature, name=dataset_name, split='val', transform=transform)
+    val_data = UPFD(root='data', feature=feature, name=dataset_name, split='test', transform=transform)
     num_features = train_data.num_features
     train_data = [relabel(data, label_mapping) for data in train_data]
-    train_data = [extract_k_hop_subgraph(data, 0, 4) for data in train_data]
+    #train_data = [extract_k_hop_subgraph(data, 0, 4) for data in train_data]
     val_data = [relabel(data, label_mapping) for data in val_data]
     test_data = [relabel(data, label_mapping) for data in test_data]
     #transform = AddGaussianNoise(mean=0.0, std=1.0)
@@ -100,8 +100,8 @@ def get_combined_upfd_dataset(num_classes):
     full_politifact_dataset = politifact_train + politifact_val + politifact_test
     full_dataset = full_gossipcop_dataset + full_politifact_dataset
     undersampled_dataset = undersample(full_dataset)
-    train_size = int(len(undersampled_dataset) * 0.3)
-    val_size = int(len(undersampled_dataset) * 0.3)
+    train_size = int(len(undersampled_dataset) * 0.4)
+    val_size = int(len(undersampled_dataset) * 0.4)
     test_size = len(undersampled_dataset) - val_size - train_size
     generator = torch.Generator().manual_seed(42)
     train_data, val_test_data = random_split(undersampled_dataset, [train_size, val_size + test_size], generator=generator)

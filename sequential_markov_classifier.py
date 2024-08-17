@@ -131,7 +131,9 @@ def is_row_stochastic(matrix):
 
 def mixing_time(transition_matrix, epsilon=0.01):
     eigenvalues, _ = torch.linalg.eig(transition_matrix)
-    lambda_2 = abs(eigenvalues[1])
+    eigenvalues = abs(eigenvalues)
+    eigenvalues, _ = torch.sort(eigenvalues, descending=True)
+    lambda_2 = eigenvalues[1]
     spectral_gap = 1 - lambda_2
     if spectral_gap == 0:
         raise ValueError(
@@ -157,8 +159,8 @@ def calc_alpha(loader, device, num_z, label, eta_iid, num_classes):
         if row_sums[i] == 0:
             transition_matrix[i,:] = torch.ones(num_z) / num_z
     assert is_row_stochastic(transition_matrix)
-    mix_time = mixing_time(transition_matrix, epsilon=0.01)
-    print(f"mix_time: {mix_time}")
+    #mix_time = mixing_time(transition_matrix, epsilon=0.01)
+    #print(f"mix_time: {mix_time}")
     return transition_matrix
 
 def calc_eta(loader, device, num_z, label):
@@ -211,7 +213,7 @@ def get_alpha_and_eta(dataset, device, num_classes, num_z, eta_iid=None, load=Fa
         torch.save(iid_eta, "iid_eta.pt")
         torch.save(alpha, "alpha.pt")
         torch.save(eta, "eta.pt")
-        return alpha, eta, eta_iid
+        return alpha, eta, iid_eta
 
 
 class sequential_markov(torch.nn.Module):

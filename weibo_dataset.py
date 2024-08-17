@@ -59,7 +59,7 @@ def get_weibo_dataset():
     test_size = len(undersampled_dataset) - val_size - train_size
     generator = torch.Generator().manual_seed(42)
     train_data, val_test_data = random_split(undersampled_dataset, [train_size, val_size + test_size], generator=generator)
-    train_data = [extract_k_hop_subgraph(data, 0, 5) for data in train_data]
+    #train_data = [extract_k_hop_subgraph(data, 0, 5) for data in train_data]
     val_data, test_data = random_split(val_test_data, [val_size, test_size], generator=generator)
     val_data = [data for data in val_data]
     test_data = [data for data in test_data]
