@@ -75,4 +75,4 @@ def sequential_test(model, device, loader, pvalue=0.7, eps = 0.2):
         all_labels = np.append(all_labels, data.y)
     print("n: %r, non-converge: %r, acc: %f, T: %r" % (n, num_nonconverge, correct / n, T_sum / n))
     print(full_trace_T_sum / n)
-    print(classification_report(all_labels, all_predicted))
+    print(classification_report(all_labels, all_predicted, zero_division=0.0))

@@ -1,20 +1,23 @@
 import torch
 from upfd_combined_dataset import get_combined_upfd_dataloader, get_combined_upfd_dataset
-from gnn_model import GIN_markov
+from msprtgnn import GIN_markov
 import numpy as np
 from sklearn.metrics import classification_report, recall_score
 import torch.nn as nn
 from sequential_test import sequential_test
 import matplotlib.pyplot as plt
-from sequential_markov_classifier import get_alpha_and_eta, sequential_markov, z_classify_dataset
+from markov_msprt import get_alpha_and_eta, sequential_markov, z_classify_dataset
 from quickstop import get_quickstop_alpha_and_eta, quickstop
 from torch_geometric.loader import DataLoader
-from sequential_iid_classifier import get_iid_eta, sequential_iid
+from naive_msprt import get_iid_eta, sequential_iid
 from weibo_dataset import get_weibo_dataset, get_weibo_dataloader
 import networkx as nx
 from torch_geometric.utils import to_networkx
 from torch_geometric.nn import global_add_pool
-from torch.utils.data import Subset, random_split
+
+np.set_printoptions(suppress=True)
+torch.set_printoptions(sci_mode=False)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train(model, optimizer, train_loader, device, l1_lambda=0.0):
     model.train()
@@ -48,15 +51,15 @@ def test(model, loader, device):
         total_examples += data.num_graphs
         all_predicted = np.append(all_predicted, pred)
         all_labels = np.append(all_labels, data.y)
-    print(classification_report(all_labels, all_predicted))
+    print(classification_report(all_labels, all_predicted, zero_division=0.0))
     min_recall = np.min(recall_score(all_labels, all_predicted, average=None))
     acc = total_correct / total_examples
     return acc
 
-def train_loop(model, train_loader, val_loader, test_loader, device, lr=0.005, weight_decay=0.01, dataset='', l1_lambda=0.0):
+def train_loop(model, train_loader, test_loader, device, lr=0.005, weight_decay=0.01, dataset='', l1_lambda=0.0):
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, betas=(0.8, 0.995))
     best_test_acc = 0.0
-    for epoch in range(1, 61):
+    for epoch in range(0, num_epochs):
         loss = train(model, optimizer, train_loader, device, l1_lambda=l1_lambda)
         train_acc = test(model, train_loader, device)
         #val_acc = test(model, val_loader, device)
@@ -71,7 +74,6 @@ def train_loop(model, train_loader, val_loader, test_loader, device, lr=0.005, w
 
 def tune_hyperparams(train_loader, val_loader, test_loader, device, num_features, num_classes):
     lrs = [0.001, 0.002, 0.004]
-    #weight_decays = [round(i * 0.001, 3) for i in range(1, 10, 1)]
     weight_decays = [0.01]
     print(lrs)
     print(weight_decays)
@@ -82,7 +84,7 @@ def tune_hyperparams(train_loader, val_loader, test_loader, device, num_features
         for weight_decay in weight_decays:
             print(f'lr {lr:.4f}, decay: {weight_decay:.4f}')
             model = GIN_markov(num_features, output_dim=num_classes).to(device)
-            train_loop(model, train_loader, val_loader, test_loader, device, lr, weight_decay)
+            train_loop(model, train_loader, test_loader, device, lr, weight_decay)
             val_acc = test(model, val_loader, device)
             x += [lr]
             y += [weight_decay]
@@ -180,90 +182,108 @@ def get_stationary_transition(P):
     pi = np.linalg.lstsq(A, b, rcond=None)[0]
     return pi
 
-def offline_msprt_algo(train_data, test_data, gnn_classifier, num_classes, num_z, device):
-    z_classified_train_dataset = z_classify_dataset(train_data, gnn_classifier, num_classes, num_z,
-                                                    name="z_class_train_dataset.pt", load=load_z_dataset)
-    alpha, eta, iid_eta = get_alpha_and_eta(z_classified_train_dataset, device, num_classes, num_z, load=load_alpha)
+def train_naive(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
+    filename = dataset + "_z_class_train_dataset.pt"
+    z_classified_train_dataset = z_classify_dataset(train_data, edge_classifier, num_classes, num_z, name=filename, load=load_z_dataset)
+    iid_eta, iid_label_counter = get_iid_eta(dataset, z_classified_train_dataset, num_classes, num_z, load=load_alpha)
     naive_iid_model = sequential_iid(num_classes, iid_eta)
-    markov_model = sequential_markov(num_classes, alpha, eta)
-    #print(eta_iid)
-    z_classified_test_dataset = z_classify_dataset(test_data, gnn_classifier, num_classes, num_z,
-                                                   name="z_class_test_dataset.pt", load=load_z_dataset)
-    test_loader = DataLoader(z_classified_test_dataset, batch_size=1, shuffle=True)
-    eta_iid_test, iid_label_counter_test = get_iid_eta(z_classified_test_dataset, num_classes, num_z, load=load_alpha)
-    #plot_eta_iid(eta_iid_test, num_classes)
-    #print(eta)
-    #print(alpha)
-    for i in range(num_classes):
-        stationary_p = get_stationary_transition(alpha[i])
-        #print(stationary_p)
-    return markov_model, naive_iid_model, test_loader
+    return naive_iid_model
 
-def offline_quickstop_algo(train_data, test_data, gnn_classifier, num_classes, num_z, device):
-    z_classified_train_dataset = z_classify_dataset(train_data, gnn_classifier, num_classes, num_z,
-                                                    name="z_class_train_dataset.pt", load=True)
-    quick_alpha, quick_eta = get_quickstop_alpha_and_eta(z_classified_train_dataset, device, num_classes, num_z, load=load)
+def train_markovmsprt(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
+    filename = dataset + "_z_class_train_dataset.pt"
+    z_classified_train_dataset = z_classify_dataset(train_data, edge_classifier, num_classes, num_z, name=filename, load=True)
+    alpha, eta = get_alpha_and_eta(dataset, z_classified_train_dataset, device, num_classes, num_z, load=load_alpha)
+    markov_model = sequential_markov(num_classes, alpha, eta)
+    return markov_model
+
+def train_quickstop(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
+    filename = dataset + "_z_class_train_dataset.pt"
+    z_classified_train_dataset = z_classify_dataset(train_data, edge_classifier, num_classes, num_z, name=filename, load=True)
+    quick_alpha, quick_eta = get_quickstop_alpha_and_eta(dataset, z_classified_train_dataset, device, num_classes, num_z, load=load)
     quickstop_model = quickstop(num_classes, quick_alpha, quick_eta)
-    for i in range(num_classes):
-        stationary_p = get_stationary_transition(quick_eta[i])
     return quickstop_model
 
-np.set_printoptions(suppress=True)
-torch.set_printoptions(sci_mode=False)
+def train_msprtgnn(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
+    if dataset == "upfd":
+        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 512, 0.000001
+    elif dataset == "weibo":
+        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 64, 0.000001
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_data, batch_size=1, shuffle=True)
+
+    gnn_classifier = GIN_markov(num_features, hidden_dim=hidden_dim, output_dim=num_classes).to(device)
+    if not load_gnn:
+        train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda)
+    gnn_classifier.load_state_dict(torch.load(dataset + '_model.pt', weights_only=True))
+    gnn_classifier.T = T / 4
+    gnn_classifier.pool = global_add_pool
+    return gnn_classifier
+
+models_train_fn_dict = {
+    "msprtGNN" : train_msprtgnn,
+    #"upfd-sage": train_upfd,
+    #"gcnfn" : train_gcnfn,
+    "naive" : train_naive,
+    "markovMSPRT" : train_markovmsprt,
+    "quickstop" : train_quickstop,
+    #"HGFND" : train_hgfnd,
+}
+upfd_threshold_dict = {
+    "msprtGNN" : 0.95,
+    #"upfd-sage": train_upfd,
+    #"gcnfn" : train_gcnfn,
+    "naive" : 0.1, #0.999999,
+    "markovMSPRT" : 0.1, #0.999999,
+    "quickstop" : 0.1 #0.9,
+    #"HGFND"" : train_hgfnd,
+}
+weibo_threshold_dict = {
+    "msprtGNN" : 0.1, #0.8,
+    #"upfd-sage": train_upfd,
+    #"gcnfn" : train_gcnfn,
+    "naive" : 0.1, #0.9999,
+    "markovMSPRT" : 0.1, #0.9999,
+    "quickstop" : 0.1, #0.8,
+    #"HGFND" : train_hgfnd,
+}
+threshold_dict = {
+    "upfd" : upfd_threshold_dict,
+    "weibo": weibo_threshold_dict,
+}
 
 load = True
 load_gnn = load
 load_z_dataset = load
 load_alpha = load
 dataset = "weibo"
+batch_size = 32
+num_epochs = 2
 
 def main():
+    num_classes = 4 if dataset == "upfd" else 3
+    num_z = num_classes * (num_classes - 1)
     if dataset == "upfd":
-        num_classes = 4
-        num_z = num_classes * (num_classes-1)
         train_data, val_data, test_data, num_features = get_combined_upfd_dataset(num_classes)
-        train_data += val_data
-        val_data = train_data
-        train_loader, val_loader, test_loader = get_combined_upfd_dataloader(train_data, val_data, test_data, batch_size=32)
-        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 512, 0.000001
-        gnn_threshold = 0.95
-        msprt_threshold = 0.999999
-        quickstop_threshold = 0.9
     elif dataset == "weibo":
-        num_classes = 3
-        num_z = num_classes * (num_classes-1)
-        train_data, val_data, test_data, num_features = get_weibo_dataset()
-        train_data += val_data
-        val_data = train_data
-        train_loader, val_loader, test_loader = get_weibo_dataloader(train_data, val_data, test_data, batch_size=32)
-        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 64, 0.000001
-        gnn_threshold = 0.8
-        msprt_threshold = 0.9999
-        quickstop_threshold = 0.8
-    print(f'Train dataset size: {len(train_data)}, Validation dataset size: {len(val_data)}, Test dataset size: {len(test_data)}')
+        train_data, val_data, test_data, num_features = get_weibo_dataset(num_classes)
+    train_data += val_data
+    print(f'Train dataset size: {len(train_data)}, Test dataset size: {len(test_data)}')
     T = print_dataset_stats(train_data + val_data + test_data)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    gnn_classifier = GIN_markov(num_features, hidden_dim=hidden_dim, output_dim=num_classes).to(device)
-    if not load_gnn:
-        train_loop(gnn_classifier, train_loader, val_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda)
-    gnn_classifier.load_state_dict(torch.load(dataset + '_model.pt'))
-    gnn_classifier.T = T / 4
-    gnn_classifier.pool = global_add_pool
-    test_acc = test(gnn_classifier, test_loader, device)
-    print(f'Loaded model. test acc: {test_acc:.4f}')
-    print(f'GINConv eps: {gnn_classifier.conv1.eps.item():.4f}')
-    if True:
-        markov_model, naive_iid_model, test_loader = offline_msprt_algo(val_data, test_data, gnn_classifier, num_classes, num_z, device)
-        quickstop_model = offline_quickstop_algo(val_data, test_data, gnn_classifier, num_classes, num_z, device)
-        print("quickstop model:")
-        sequential_test(quickstop_model, device, test_loader, pvalue=quickstop_threshold)
-        print("naive iid model:")
-        sequential_test(naive_iid_model, device, test_loader, pvalue=msprt_threshold)
-        print("markov model:")
-        sequential_test(markov_model, device, test_loader, pvalue=msprt_threshold)
-    print("GNN model:")
-    sequential_test(gnn_classifier, device, test_loader, pvalue=gnn_threshold)
-
+    models_dict = {}
+    edge_classifier_name = "msprtGNN"
+    edge_classifier = None
+    for model_name, train_fn in models_train_fn_dict.items():
+        model = train_fn(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z)
+        models_dict[model_name] = model
+        if model_name == edge_classifier_name:
+            edge_classifier = model
+    filename = dataset + "_z_class_test_dataset.pt"
+    z_classified_test_dataset = z_classify_dataset(test_data, edge_classifier, num_classes, num_z,name=filename, load=load_z_dataset)
+    test_loader = DataLoader(z_classified_test_dataset, batch_size=1, shuffle=True)
+    for model_name, model in models_dict.items():
+        print(f"Testing model {model_name}")
+        sequential_test(model, device, test_loader, pvalue=threshold_dict[dataset][model_name])
 
 if __name__ == '__main__':
     main()

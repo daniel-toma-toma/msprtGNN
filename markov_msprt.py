@@ -180,40 +180,22 @@ def calc_eta(loader, device, num_z, label):
     assert torch.allclose(torch.sum(eta_z), torch.ones(1))
     return eta_z, label_counter
 
-def calc_iid_eta(loader, num_z, label):
-    label_counter = torch.zeros(num_z)
-    edges_counter = 0
-    for data in tqdm(loader, desc=f'calculating eta for class {label}'):
-        if data.y != label:
-            continue
-        for z in data.z:
-            label_counter[z] += 1
-            edges_counter += 1
-            assert torch.sum(label_counter) == edges_counter
-    iid_eta = label_counter / edges_counter
-    assert torch.allclose(torch.sum(iid_eta), torch.ones(1))
-    return iid_eta, label_counter
-
-def get_alpha_and_eta(dataset, device, num_classes, num_z, eta_iid=None, load=False):
+def get_alpha_and_eta(dataset_name, dataset, device, num_classes, num_z, load=False):
     if load:
-        alpha = torch.load("alpha.pt", weights_only=True)
-        eta = torch.load("eta.pt", weights_only=True)
-        iid_eta = torch.load("iid_eta.pt", weights_only=True)
-        return alpha, eta, iid_eta
+        alpha = torch.load(dataset_name+"_alpha.pt", weights_only=True)
+        eta = torch.load(dataset_name+"_eta.pt", weights_only=True)
+        return alpha, eta
     else:
         loader = DataLoader(dataset, batch_size=1, shuffle=True)
         alpha = torch.zeros((num_classes, num_z, num_z))
         eta = torch.zeros((num_classes, num_z))
-        iid_eta = torch.zeros((num_classes, num_z))
-        iid_label_counter = torch.zeros((num_classes, num_z))
+        iid_label_counter = torch.load(dataset_name+"_iid_label_counter.pt", weights_only=True)
         for label in range(num_classes):
-            iid_eta[label], iid_label_counter[label] = calc_iid_eta(loader, num_z, label)
             alpha[label] = calc_alpha(loader, device, num_z, label, iid_label_counter[label], num_classes)
             eta[label], label_counter = calc_eta(loader, device, num_z, label)
-        torch.save(iid_eta, "iid_eta.pt")
-        torch.save(alpha, "alpha.pt")
-        torch.save(eta, "eta.pt")
-        return alpha, eta, iid_eta
+        torch.save(alpha, dataset_name+"_alpha.pt")
+        torch.save(eta, dataset_name+"_eta.pt")
+        return alpha, eta
 
 
 class sequential_markov(torch.nn.Module):

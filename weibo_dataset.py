@@ -50,7 +50,9 @@ class StandardizeFeatures(BaseTransform):
         data.x = (x - mean) / std
         return data
 
-def get_weibo_dataset():
+def get_weibo_dataset(num_classes):
+    if num_classes != 3:
+        return NotImplementedError
     transform = StandardizeFeatures()
     weibo_dataset = WeiboDataset(root='weibo_dataset', pre_transform=transform)
     undersampled_dataset = undersample(weibo_dataset)

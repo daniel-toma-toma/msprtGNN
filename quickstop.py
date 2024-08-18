@@ -52,10 +52,10 @@ def calc_eta(loader, device, num_z, label):
     assert torch.allclose(torch.sum(eta_z), torch.ones(1))
     return eta_z, label_counter
 
-def get_quickstop_alpha_and_eta(dataset, device, num_classes, num_z, load=False):
+def get_quickstop_alpha_and_eta(dataset_name, dataset, device, num_classes, num_z, load=False):
     if load:
-        alpha = torch.load("quickstop_alpha.pt", weights_only=True)
-        eta = torch.load("quickstop_eta.pt", weights_only=True)
+        alpha = torch.load(dataset_name+"_quickstop_alpha.pt", weights_only=True)
+        eta = torch.load(dataset_name+"_quickstop_eta.pt", weights_only=True)
         return alpha, eta
     else:
         loader = DataLoader(dataset, batch_size=1, shuffle=True)
@@ -64,8 +64,8 @@ def get_quickstop_alpha_and_eta(dataset, device, num_classes, num_z, load=False)
         for label in range(num_classes):
             eta[label], label_counter = calc_eta(loader, device, num_z, label)
             alpha[label] = calc_alpha(loader, device, num_z, label)
-        torch.save(alpha, "quickstop_alpha.pt")
-        torch.save(eta, "quickstop_eta.pt")
+        torch.save(alpha, dataset_name+"_quickstop_alpha.pt")
+        torch.save(eta, dataset_name+"_quickstop_eta.pt")
         return alpha, eta
 
 

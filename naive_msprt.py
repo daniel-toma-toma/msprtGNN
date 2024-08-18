@@ -1,7 +1,7 @@
 import torch
 from tqdm import tqdm
 from torch_geometric.loader import DataLoader
-from sequential_markov_classifier import get_edge_subgraphs, calc_iid_eta
+from markov_msprt import get_edge_subgraphs
 
 def classify_edges(classifier, data):
     edge_subgraphs = get_edge_subgraphs(data)
@@ -14,17 +14,33 @@ def classify_edges(classifier, data):
     data.z = z
     return data
 
-def get_iid_eta(dataset, num_classes, num_z, load=False):
+def calc_iid_eta(loader, num_z, label):
+    label_counter = torch.zeros(num_z)
+    edges_counter = 0
+    for data in tqdm(loader, desc=f'calculating eta for class {label}'):
+        if data.y != label:
+            continue
+        for z in data.z:
+            label_counter[z] += 1
+            edges_counter += 1
+            assert torch.sum(label_counter) == edges_counter
+    iid_eta = label_counter / edges_counter
+    assert torch.allclose(torch.sum(iid_eta), torch.ones(1))
+    return iid_eta, label_counter
+
+def get_iid_eta(dataset_name, dataset, num_classes, num_z, load=False):
     if load:
-        iid_eta = torch.load("iid_eta.pt", weights_only=True)
-        return iid_eta, None
+        iid_eta = torch.load(dataset_name+"_iid_eta.pt", weights_only=True)
+        iid_label_counter = torch.load(dataset_name+"_iid_label_counter.pt", weights_only=True)
+        return iid_eta, iid_label_counter
     else:
         loader = DataLoader(dataset, batch_size=1, shuffle=True)
         iid_eta = torch.zeros((num_classes, num_z))
         iid_label_counter = torch.zeros((num_classes, num_z))
         for label in range(num_classes):
             iid_eta[label], iid_label_counter[label] = calc_iid_eta(loader, num_z, label)
-        torch.save(iid_eta, "iid_eta.pt")
+        torch.save(iid_eta, dataset_name+"_iid_eta.pt")
+        torch.save(iid_label_counter, dataset_name+"_iid_label_counter.pt")
         return iid_eta, iid_label_counter
 
 
