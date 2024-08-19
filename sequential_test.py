@@ -43,7 +43,7 @@ class Results:
         self.risk = risk
 
     def print_results(self):
-        print(f"\\texttt {self.model_name} & {self.accuracy:.2f} & {self.deadline:.2f} & {self.risk:.2f}\\\\")
+        print(f"\\texttt{{{self.model_name}}} & {self.accuracy:.2f} & {self.deadline:.2f} & {self.risk:.2f}\\\\")
 
 
 # Example usage:

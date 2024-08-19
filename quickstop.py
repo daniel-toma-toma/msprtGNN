@@ -4,6 +4,8 @@ from collections import defaultdict
 from torch_geometric.data import Data, Batch
 from torch_geometric.loader import DataLoader
 
+tmp_dir = "./tmp/"
+
 def count_transitions(graph: Data, num_z):
     transition_counts = defaultdict(int)
     for i in range(len(graph.z)):
@@ -54,8 +56,8 @@ def calc_eta(loader, device, num_z, label):
 
 def get_quickstop_alpha_and_eta(dataset_name, dataset, device, num_classes, num_z, load=False):
     if load:
-        alpha = torch.load(dataset_name+"_quickstop_alpha.pt", weights_only=True)
-        eta = torch.load(dataset_name+"_quickstop_eta.pt", weights_only=True)
+        alpha = torch.load(tmp_dir+dataset_name+"_quickstop_alpha.pt", weights_only=True)
+        eta = torch.load(tmp_dir+dataset_name+"_quickstop_eta.pt", weights_only=True)
         return alpha, eta
     else:
         loader = DataLoader(dataset, batch_size=1, shuffle=True)
@@ -64,8 +66,8 @@ def get_quickstop_alpha_and_eta(dataset_name, dataset, device, num_classes, num_
         for label in range(num_classes):
             eta[label], label_counter = calc_eta(loader, device, num_z, label)
             alpha[label] = calc_alpha(loader, device, num_z, label)
-        torch.save(alpha, dataset_name+"_quickstop_alpha.pt")
-        torch.save(eta, dataset_name+"_quickstop_eta.pt")
+        torch.save(alpha, tmp_dir+dataset_name+"_quickstop_alpha.pt")
+        torch.save(eta, tmp_dir+dataset_name+"_quickstop_eta.pt")
         return alpha, eta
 
 

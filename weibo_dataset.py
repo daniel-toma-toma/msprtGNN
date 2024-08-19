@@ -7,8 +7,9 @@ from upfd_combined_dataset import undersample, extract_k_hop_subgraph
 from torch_geometric.transforms import BaseTransform
 
 class WeiboDataset(InMemoryDataset):
-    def __init__(self, root, transform=None, pre_transform=None, pre_filter=None):
+    def __init__(self, root, features=None, transform=None, pre_transform=None, pre_filter=None):
         super().__init__(root, transform, pre_transform, pre_filter)
+        self.feature = features
         self.load(self.processed_paths[0])
 
     @property
@@ -26,10 +27,11 @@ class WeiboDataset(InMemoryDataset):
         data_list = []
         for item in raw_data:
             x = item['x']
-            user_desc = item['user_desc']
-            text = item['text']
-            text = (text+user_desc) / 2
-            x = torch.hstack((x, text))
+            if self.feature == "content":
+                user_desc = item['user_desc']
+                text = item['text']
+                text = (text+user_desc) / 2
+                x = torch.hstack((x, text))
             data = Data(x=x, edge_index=item['edge_index'], y=item['y'])
             data_list.append(data)
         print(len(data_list))
@@ -50,11 +52,11 @@ class StandardizeFeatures(BaseTransform):
         data.x = (x - mean) / std
         return data
 
-def get_weibo_dataset(num_classes):
+def get_weibo_dataset(num_classes, features):
     if num_classes != 3:
         return NotImplementedError
     transform = StandardizeFeatures()
-    weibo_dataset = WeiboDataset(root='weibo_dataset', pre_transform=transform)
+    weibo_dataset = WeiboDataset(root='weibo_dataset', features=features, pre_transform=transform)
     undersampled_dataset = undersample(weibo_dataset)
     train_size = int(len(undersampled_dataset) * 0.7)
     val_size = int(len(undersampled_dataset) * 0.1)

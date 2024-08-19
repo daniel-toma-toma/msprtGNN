@@ -2,23 +2,17 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.nn import global_max_pool as gmp
 from torch_geometric.nn import GCNConv, SAGEConv, GATConv
-
-
 """
 The GCN, GAT, and GraphSAGE implementation
 """
-
-
 class upfdGNN(torch.nn.Module):
-	def __init__(self, args, concat=False):
+	def __init__(self, num_features, nhid, num_classes, dropout_ratio=0.0):
 		super(upfdGNN, self).__init__()
-		self.args = args
-		self.num_features = args.num_features
-		self.nhid = args.nhid
-		self.num_classes = args.num_classes
-		self.dropout_ratio = args.dropout_ratio
-		self.model = args.model
-		self.concat = concat
+		self.num_features = num_features
+		self.nhid = nhid
+		self.num_classes = num_classes
+		self.dropout_ratio = dropout_ratio
+		self.model = 'sage'
 
 		if self.model == 'gcn':
 			self.conv1 = GCNConv(self.num_features, self.nhid)

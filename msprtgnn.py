@@ -17,7 +17,7 @@ class GIN_markov(torch.nn.Module):
         nn = Sequential(
             Linear(int(hidden_dim), int(output_dim))
         )
-        self.conv1 = GINConv(nn, train_eps=True, eps=2.0)
+        self.conv1 = GINConv(nn, train_eps=True, eps=3.0)
         self.pool = global_mean_pool
         #self.T = torch.nn.Parameter(torch.tensor(1.0))
         self.T = 1.0
@@ -30,7 +30,7 @@ class GIN_markov(torch.nn.Module):
         z = torch.cat([F.log_softmax(z, dim=1)], dim=0)
         z = self.pool(z, batch)  # log(Pr(Zi | Fi-1))
         z = z / self.T
-        #z = F.dropout(z, p=0.5, training=self.training)
+        z = F.dropout(z, p=0.5, training=self.training)
         z = F.log_softmax(z, dim=1)
         return z
 

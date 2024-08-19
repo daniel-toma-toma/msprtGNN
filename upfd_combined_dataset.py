@@ -29,8 +29,7 @@ class AddGaussianNoise:
         data.x = data.x + noise
         return data
 
-def load_and_relabel(dataset_name, label_mapping):
-    feature = 'content'
+def load_and_relabel(dataset_name, label_mapping, feature):
     transform = None
     train_data = UPFD(root='data', feature=feature, name=dataset_name, split='train', transform=transform)
     test_data = UPFD(root='data', feature=feature, name=dataset_name, split='val', transform=transform)
@@ -84,7 +83,7 @@ def enhance(dataset):
         enhanced_data_list.extend(subgraphs)
     return enhanced_data_list
 
-def get_combined_upfd_dataset(num_classes):
+def get_combined_upfd_dataset(num_classes, features):
     if num_classes == 3:
         gossipcop_label_mapping = {0: 0, 1: 1}
         politifact_label_mapping = {0: 0, 1: 2}
@@ -94,8 +93,8 @@ def get_combined_upfd_dataset(num_classes):
     elif num_classes == 2:
         gossipcop_label_mapping = {0: 0, 1: 1}
         politifact_label_mapping = {0: 0, 1: 1}
-    gossipcop_train, gossipcop_val, gossipcop_test, num_features = load_and_relabel('gossipcop', gossipcop_label_mapping)
-    politifact_train, politifact_val, politifact_test, num_features = load_and_relabel('politifact', politifact_label_mapping)
+    gossipcop_train, gossipcop_val, gossipcop_test, num_features = load_and_relabel('gossipcop', gossipcop_label_mapping, features)
+    politifact_train, politifact_val, politifact_test, num_features = load_and_relabel('politifact', politifact_label_mapping, features)
     full_gossipcop_dataset = gossipcop_train + gossipcop_val + gossipcop_test
     full_politifact_dataset = politifact_train + politifact_val + politifact_test
     full_dataset = full_gossipcop_dataset + full_politifact_dataset
