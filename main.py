@@ -14,9 +14,13 @@ from weibo_dataset import get_weibo_dataset, get_weibo_dataloader
 import networkx as nx
 from torch_geometric.utils import to_networkx
 from torch_geometric.nn import global_add_pool
+import utils
+from upfd_gnn import upfdGNN
+from gcnfn import GCNFN
 
-np.set_printoptions(suppress=True)
-torch.set_printoptions(sci_mode=False)
+sci_mode=False
+np.set_printoptions(suppress=not sci_mode)
+torch.set_printoptions(sci_mode=sci_mode)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train(model, optimizer, train_loader, device, l1_lambda=0.0):
@@ -56,7 +60,7 @@ def test(model, loader, device):
     acc = total_correct / total_examples
     return acc
 
-def train_loop(model, train_loader, test_loader, device, lr=0.005, weight_decay=0.01, dataset='', l1_lambda=0.0):
+def train_loop(model, train_loader, test_loader, device, lr=0.005, weight_decay=0.01, dataset='', l1_lambda=0.0, filename=''):
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, betas=(0.8, 0.995))
     best_test_acc = 0.0
     for epoch in range(0, num_epochs):
@@ -68,7 +72,7 @@ def train_loop(model, train_loader, test_loader, device, lr=0.005, weight_decay=
         print(f'Epoch: {epoch:02d}, Loss: {loss:.4f}, Train: {train_acc:.4f}, '
               f'Test: {test_acc:.4f}, generalization err: {general_err:.2%}')
         if test_acc >= best_test_acc:
-            torch.save(model.state_dict(), dataset + '_model.pt')
+            torch.save(model.state_dict(), filename)
             best_test_acc = test_acc
 
 
@@ -204,68 +208,129 @@ def train_quickstop(train_data, num_classes, num_features, T, test_data, edge_cl
     return quickstop_model
 
 def train_msprtgnn(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
-    if dataset == "upfd":
+    if dataset == "upfd3" or dataset == "upfd4":
         lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 512, 0.000001
     elif dataset == "weibo":
         lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 64, 0.000001
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=1, shuffle=True)
-
     gnn_classifier = GIN_markov(num_features, hidden_dim=hidden_dim, output_dim=num_classes).to(device)
+    filename = dataset+"_msprtgnn.pt"
     if not load_gnn:
-        train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda)
-    gnn_classifier.load_state_dict(torch.load(dataset + '_model.pt', weights_only=True))
-    gnn_classifier.T = T / 4
+        train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda, filename)
+    gnn_classifier.load_state_dict(torch.load(filename, weights_only=True))
+    gnn_classifier.T = T * 2
     gnn_classifier.pool = global_add_pool
+    test_acc = test(gnn_classifier, test_loader, device)
     return gnn_classifier
+
+def train_gcnfn(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
+    lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 128, 0.0
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_data, batch_size=1, shuffle=True)
+    gnn_classifier = GCNFN(num_features, nhid=hidden_dim, num_classes=num_classes).to(device)
+    filename = dataset+"_gcnfn.pt"
+    if not load_gnn:
+        train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda, filename=filename)
+    gnn_classifier.load_state_dict(torch.load(filename, weights_only=True))
+    test_acc = test(gnn_classifier, test_loader, device)
+    return gnn_classifier
+
+def train_gcnfn(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
+    lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 128, 0.0
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_data, batch_size=1, shuffle=True)
+    gnn_classifier = GCNFN(num_features, nhid=hidden_dim, num_classes=num_classes).to(device)
+    filename = dataset+"_gcnfn.pt"
+    if not load_gnn:
+        train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda, filename=filename)
+    gnn_classifier.load_state_dict(torch.load(filename, weights_only=True))
+    test_acc = test(gnn_classifier, test_loader, device)
+    return gnn_classifier
+
+train_list = [
+    #"msprtGNN",
+    #"upfd-sage",
+    "gcnfn" ,
+    #"naive",
+    #"markovMSPRT",
+    #"quickstop",
+    #"HGFND",
+    ]
+
+test_list = [
+    #"msprtGNN",
+    #"upfd-sage",
+    "gcnfn" ,
+    #"naive",
+    #"markovMSPRT",
+    #"quickstop",
+    #"HGFND",
+    ]
 
 models_train_fn_dict = {
     "msprtGNN" : train_msprtgnn,
     #"upfd-sage": train_upfd,
-    #"gcnfn" : train_gcnfn,
+    "gcnfn" : train_gcnfn,
     "naive" : train_naive,
     "markovMSPRT" : train_markovmsprt,
     "quickstop" : train_quickstop,
     #"HGFND" : train_hgfnd,
 }
-upfd_threshold_dict = {
-    "msprtGNN" : 0.95,
-    #"upfd-sage": train_upfd,
-    #"gcnfn" : train_gcnfn,
-    "naive" : 0.1, #0.999999,
-    "markovMSPRT" : 0.1, #0.999999,
-    "quickstop" : 0.1 #0.9,
+
+upfd3_threshold_dict = {
+    "msprtGNN" : 0.62,
+    #"upfd-sage": 0.9,
+    "gcnfn" : 0.9,
+    "naive" : 0.998,
+    "markovMSPRT" : 0.99998,
+    "quickstop" : 0.93,
+    #"HGFND"" : train_hgfnd,
+}
+upfd4_threshold_dict = {
+    "msprtGNN" : 0.62,
+    #"upfd-sage": 0.9,
+    "gcnfn" : 0.9,
+    "naive" : 0.998,
+    "markovMSPRT" : 0.99998,
+    "quickstop" : 0.93,
     #"HGFND"" : train_hgfnd,
 }
 weibo_threshold_dict = {
-    "msprtGNN" : 0.1, #0.8,
-    #"upfd-sage": train_upfd,
-    #"gcnfn" : train_gcnfn,
-    "naive" : 0.1, #0.9999,
-    "markovMSPRT" : 0.1, #0.9999,
-    "quickstop" : 0.1, #0.8,
+    "msprtGNN" : 0.36, #0.42,
+    #"upfd-sage": 0.9,
+    "gcnfn" : 0.55,
+    "naive" : 0.99,
+    "markovMSPRT" : 0.99,
+    "quickstop" : 0.7,
     #"HGFND" : train_hgfnd,
 }
 threshold_dict = {
-    "upfd" : upfd_threshold_dict,
+    "upfd3" : upfd3_threshold_dict,
+    "upfd4" : upfd4_threshold_dict,
     "weibo": weibo_threshold_dict,
 }
 
-load = True
+load = False
 load_gnn = load
 load_z_dataset = load
 load_alpha = load
 dataset = "weibo"
 batch_size = 32
-num_epochs = 2
+num_epochs = 60
+hyper_tune_th = True
 
 def main():
-    num_classes = 4 if dataset == "upfd" else 3
-    num_z = num_classes * (num_classes - 1)
-    if dataset == "upfd":
+    if dataset == "upfd3":
+        num_classes = 3
+        train_data, val_data, test_data, num_features = get_combined_upfd_dataset(num_classes)
+    if dataset == "upfd4":
+        num_classes = 4
         train_data, val_data, test_data, num_features = get_combined_upfd_dataset(num_classes)
     elif dataset == "weibo":
+        num_classes = 3
         train_data, val_data, test_data, num_features = get_weibo_dataset(num_classes)
+    num_z = num_classes * (num_classes - 1)
     train_data += val_data
     print(f'Train dataset size: {len(train_data)}, Test dataset size: {len(test_data)}')
     T = print_dataset_stats(train_data + val_data + test_data)
@@ -273,17 +338,47 @@ def main():
     models_dict = {}
     edge_classifier_name = "msprtGNN"
     edge_classifier = None
-    for model_name, train_fn in models_train_fn_dict.items():
+    for model_name in train_list:
+        train_fn = models_train_fn_dict[model_name]
         model = train_fn(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z)
         models_dict[model_name] = model
         if model_name == edge_classifier_name:
             edge_classifier = model
-    filename = dataset + "_z_class_test_dataset.pt"
-    z_classified_test_dataset = z_classify_dataset(test_data, edge_classifier, num_classes, num_z,name=filename, load=load_z_dataset)
-    test_loader = DataLoader(z_classified_test_dataset, batch_size=1, shuffle=True)
-    for model_name, model in models_dict.items():
+    if edge_classifier is not None:
+        filename = dataset + "_z_class_test_dataset.pt"
+        z_classified_test_dataset = z_classify_dataset(test_data, edge_classifier, num_classes, num_z,name=filename, load=load_z_dataset)
+        test_loader = DataLoader(z_classified_test_dataset, batch_size=1, shuffle=True)
+    else:
+        test_loader = DataLoader(test_data, batch_size=1, shuffle=False)
+
+    optimal_thrs = {}
+    results = []
+    print("Model & Accuracy & Average Deadline & Bayesian Risk")
+    for model_name in test_list:
         print(f"Testing model {model_name}")
-        sequential_test(model, device, test_loader, pvalue=threshold_dict[dataset][model_name])
+        model = models_dict[model_name]
+        bayesian_risks = {}
+        if hyper_tune_th:
+            #base = 1-0.71
+            #thresholds = [1-base*4, 1-base*2, 1-base*np.sqrt(2), 1-base, 1-base/np.sqrt(2), 1-base/2, 1-base/4]
+            thresholds = [0.55]
+        else:
+            thresholds = [threshold_dict[dataset][model_name]]
+        for th in thresholds:
+            print(f"threshold:{th}")
+            result = sequential_test(model, device, test_loader, pvalue=th, model_name=model_name)
+            bayesian_risks[th] = result.risk
+            results += [result]
+            result.print_results()
+        if hyper_tune_th:
+            min_th, min_bayesian_risk = utils.find_min_value_key(bayesian_risks)
+            optimal_thrs[model_name] = min_th
+            utils.plot_dict(bayesian_risks)
+    for result in results:
+        result.print_results()
+
+    print(optimal_thrs)
+
 
 if __name__ == '__main__':
     main()

@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, accuracy_score
 from torch_geometric.utils import to_networkx, from_networkx
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -34,11 +34,37 @@ def add_nodes_by_posting_time(data):
             subgraph_data.z = subgraph_edge_attr
         yield subgraph_data
 
-def sequential_test(model, device, loader, pvalue=0.7, eps = 0.2):
+
+class Results:
+    def __init__(self, model_name, accuracy, deadline, risk):
+        self.model_name = model_name
+        self.accuracy = accuracy
+        self.deadline = deadline
+        self.risk = risk
+
+    def print_results(self):
+        print(f"\\texttt {self.model_name} & {self.accuracy:.2f} & {self.deadline:.2f} & {self.risk:.2f}\\\\")
+
+
+# Example usage:
+# result = Results("Model1", 0.95, 0.93, "2024-08-18", "Low")
+# result.print_results()
+
+#def calc_risk(pred_list, label_list, T_list, c_prop=1.0, c_err=100000.0):
+def calc_risk(pred_list, label_list, T_list, c_prop=1.0, c_err=1000.0):
+    propagation_risk = c_prop * np.mean(T_list)
+    count_wrong_pred = sum(1 for pred, label in zip(pred_list, label_list) if pred != label)
+    wrong_pred_error = count_wrong_pred / len(pred_list)
+    error_risk = c_err * wrong_pred_error
+    return error_risk + propagation_risk
+
+def sequential_test(model, device, loader, model_name, pvalue=0.7, eps = 0.2):
     correct = 0
     num_nonconverge = 0
     n = 0
     T_list = []
+    decision_list = []
+    label_list = []
     T_sum = 0
     full_trace_T_sum = 0
     all_predicted = np.array([])
@@ -70,9 +96,16 @@ def sequential_test(model, device, loader, pvalue=0.7, eps = 0.2):
         n += 1
         T_sum += T
         T_list += [T]
+        decision_list += [pred]
+        label_list += [data.y]
         correct += pred.eq(data.y).sum().item()
         all_predicted = np.append(all_predicted, pred)
         all_labels = np.append(all_labels, data.y)
-    print("n: %r, non-converge: %r, acc: %f, T: %r" % (n, num_nonconverge, correct / n, T_sum / n))
-    print(full_trace_T_sum / n)
-    print(classification_report(all_labels, all_predicted, zero_division=0.0))
+    bayesian_risk = calc_risk(decision_list, label_list, T_list)
+    acc = accuracy_score(y_true=label_list, y_pred=decision_list)
+    average_deadline = T_sum / n
+    print("n: %r, non-converge: %r, acc: %f, T: %r, bayesian_risk: %f" % (n, num_nonconverge, correct / n, average_deadline, bayesian_risk))
+    #print(full_trace_T_sum / n)
+    #print(classification_report(all_labels, all_predicted, zero_division=0.0))
+    result = Results(model_name, acc, average_deadline, bayesian_risk)
+    return result

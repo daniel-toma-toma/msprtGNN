@@ -30,7 +30,7 @@ class GIN_markov(torch.nn.Module):
         z = torch.cat([F.log_softmax(z, dim=1)], dim=0)
         z = self.pool(z, batch)  # log(Pr(Zi | Fi-1))
         z = z / self.T
-
+        #z = F.dropout(z, p=0.5, training=self.training)
         z = F.log_softmax(z, dim=1)
         return z
 
