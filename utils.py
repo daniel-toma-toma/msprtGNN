@@ -3,7 +3,7 @@ import torch
 from torch_geometric.data import Batch, Data
 from tqdm import tqdm
 
-def plot_dict(dictionary):
+def plot_dict(model_name, dictionary):
     # Extract keys and values
     x = list(dictionary.keys())
     y = list(dictionary.values())
@@ -15,7 +15,7 @@ def plot_dict(dictionary):
     # Adding labels and title
     plt.xlabel('thresholds')
     plt.ylabel('risk')
-    plt.title('risk plot')
+    plt.title(f'{model_name} risk plot')
 
     # Display the plot
     plt.grid(True)

@@ -282,18 +282,19 @@ upfd4_threshold_dict = {
     #"HGFND"" : train_hgfnd,
 }
 '''
+
 # for 10 features
 upfd4_threshold_dict = {
     "msprtGNN" : 0.5,
-    #"upfd-sage": 0.9,
-    "gcnfn" : 0.9,
+    "upfd-sage": 0.8,
+    "gcnfn" : 0.7,
     "naive" : 0.998,
-    "markovMSPRT" : 0.99998,
+    "markovMSPRT" : 0.95,
     "quickstop" : 0.93,
     #"HGFND"" : train_hgfnd,
 }
 upfd3_threshold_dict = {
-    "msprtGNN" : 0.725,#0.75,
+    "msprtGNN" : 0.72,#0.75,
     "upfd-sage": 0.95,
     "gcnfn" : 0.95,
     "naive" : 0.998,
@@ -327,9 +328,9 @@ train_list = [
     ]
 
 test_list = [
-    "msprtGNN",
-    "upfd-sage",
-    "gcnfn" ,
+    #"msprtGNN",
+    #"upfd-sage",
+    #"gcnfn" ,
     "naive",
     "markovMSPRT",
     "quickstop",
@@ -338,11 +339,11 @@ test_list = [
 
 load = True
 load_gnn = load
-load_z_dataset = True
-load_alpha = True
-dataset = "upfd3"
+load_z_dataset = load
+load_alpha = load
+dataset = "upfd4"
 batch_size = 32
-num_epochs = 60
+num_epochs = 120 if dataset == "upfd4" else 60
 hyper_tune_th = False
 features="profile"
 
@@ -387,8 +388,8 @@ def main():
         if hyper_tune_th:
             #base = 1-0.71
             #thresholds = [1-base*4, 1-base*2, 1-base*np.sqrt(2), 1-base, 1-base/np.sqrt(2), 1-base/2, 1-base/4]
-            #thresholds = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.99]
-            thresholds = [0.7, 0.8, 0.85, 0.9, 0.95, 0.97] #gcnfn
+            thresholds = [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8]
+            #thresholds = [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9] #gcnfn
         else:
             thresholds = [threshold_dict[dataset][model_name]]
         for th in thresholds:
@@ -400,7 +401,7 @@ def main():
         if hyper_tune_th:
             min_th, min_bayesian_risk = utils.find_min_value_key(bayesian_risks)
             optimal_thrs[model_name] = min_th
-            utils.plot_dict(bayesian_risks)
+            utils.plot_dict(model_name, bayesian_risks)
     print("Model & Accuracy & Average Deadline & Bayesian Risk")
     for result in results:
         result.print_results()
