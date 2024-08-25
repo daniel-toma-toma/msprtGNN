@@ -91,6 +91,8 @@ def sequential_test(model, device, loader, model_name, pvalue=0.7, eps = 0.2):
                 else:
                     posterior_pr_array += [posterior_pr]
                     pred_array += [pred]
+                #if T == 2: # for ablation study
+                #    break
             if not did_converge:
                 num_nonconverge += 1
         n += 1

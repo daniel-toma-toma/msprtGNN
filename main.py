@@ -61,10 +61,10 @@ def test(model, loader, device):
     acc = total_correct / total_examples
     return acc
 
-def train_loop(model, train_loader, test_loader, device, lr=0.005, weight_decay=0.01, dataset='', l1_lambda=0.0, filename=''):
+def train_loop(model, train_loader, test_loader, device, lr=0.005, weight_decay=0.01, dataset='', l1_lambda=0.0, filename='', epochs=60):
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, betas=(0.8, 0.995))
     best_test_acc = 0.0
-    for epoch in range(0, num_epochs):
+    for epoch in range(0, epochs):
         loss = train(model, optimizer, train_loader, device, l1_lambda=l1_lambda)
         train_acc = test(model, train_loader, device)
         test_acc = test(model, test_loader, device)
@@ -213,13 +213,13 @@ def train_msprtgnn(train_data, num_classes, num_features, T, test_data, edge_cla
     elif dataset == "upfd3" or dataset == "upfd4" and num_features==10:
         lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 256, 0.0
     elif dataset == "weibo":
-        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 64, 0.000001
+        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 64, 0.0
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=1, shuffle=True)
     gnn_classifier = GIN_markov(num_features, hidden_dim=hidden_dim, output_dim=num_classes).to(device)
     filename = tmp_dir+dataset+"_msprtgnn.pt"
     if not load_gnn:
-        train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda, filename)
+        train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda, filename, epochs=num_epochs)
     gnn_classifier.load_state_dict(torch.load(filename, weights_only=True))
     gnn_classifier.T = T / 2
     gnn_classifier.pool = global_add_pool
@@ -228,25 +228,31 @@ def train_msprtgnn(train_data, num_classes, num_features, T, test_data, edge_cla
 
 def train_gcnfn(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
     #lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 128, 0.0
-    lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 64, 0.0
+    if features == "profile":
+        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 64, 0.0
+    else:
+        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 128, 0.0
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=1, shuffle=True)
     gnn_classifier = GCNFN(num_features, nhid=hidden_dim, num_classes=num_classes).to(device)
     filename = tmp_dir+dataset+"_gcnfn.pt"
     if not load_gnn:
-        train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda, filename=filename)
+        train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda, filename=filename, epochs=num_epochs)
     gnn_classifier.load_state_dict(torch.load(filename, weights_only=True))
     test_acc = test(gnn_classifier, test_loader, device)
     return gnn_classifier
 
 def train_upfd(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
-    lr, weight_decay, hidden_dim, l1_lambda = 0.01, 0.01, 16, 0.0
+    if features == "profile":
+        lr, weight_decay, hidden_dim, l1_lambda = 0.01, 0.01, 16, 0.0
+    else:
+        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 128, 0.0
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=1, shuffle=True)
     gnn_classifier = GCNFN(num_features, nhid=hidden_dim, num_classes=num_classes).to(device)
     filename = tmp_dir+dataset+"_upfd_model.pt"
     if not load_gnn:
-        train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda, filename=filename)
+        train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda, filename=filename, epochs=num_epochs)
     gnn_classifier.load_state_dict(torch.load(filename, weights_only=True))
     test_acc = test(gnn_classifier, test_loader, device)
     return gnn_classifier
@@ -291,7 +297,6 @@ upfd4_threshold_dict = {
     "naive" : 0.998,
     "markovMSPRT" : 0.95,
     "quickstop" : 0.93,
-    #"HGFND"" : train_hgfnd,
 }
 upfd3_threshold_dict = {
     "msprtGNN" : 0.72,#0.75,
@@ -300,16 +305,14 @@ upfd3_threshold_dict = {
     "naive" : 0.998,
     "markovMSPRT" : 0.95,
     "quickstop" : 0.93,
-    #"HGFND"" : train_hgfnd,
 }
 weibo_threshold_dict = {
     "msprtGNN" : 0.36, #0.42,
-    #"upfd-sage": 0.9,
+    "upfd-sage": 0.4,
     "gcnfn" : 0.55,
     "naive" : 0.9,
     "markovMSPRT" : 0.99,
     "quickstop" : 0.9,
-    #"HGFND" : train_hgfnd,
 }
 threshold_dict = {
     "upfd3" : upfd3_threshold_dict,
@@ -324,24 +327,22 @@ train_list = [
     "naive",
     "markovMSPRT",
     "quickstop",
-    #"HGFND",
     ]
 
 test_list = [
-    #"msprtGNN",
-    #"upfd-sage",
-    #"gcnfn" ,
+    "msprtGNN",
+    "upfd-sage",
+    "gcnfn" ,
     "naive",
     "markovMSPRT",
     "quickstop",
-    #"HGFND",
     ]
 
 load = True
 load_gnn = load
 load_z_dataset = load
 load_alpha = load
-dataset = "upfd4"
+dataset = "weibo"
 batch_size = 32
 num_epochs = 120 if dataset == "upfd4" else 60
 hyper_tune_th = False

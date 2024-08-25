@@ -27,11 +27,13 @@ class WeiboDataset(InMemoryDataset):
         data_list = []
         for item in raw_data:
             x = item['x']
+            '''
             if self.feature == "content":
                 user_desc = item['user_desc']
                 text = item['text']
                 text = (text+user_desc) / 2
                 x = torch.hstack((x, text))
+            '''
             data = Data(x=x, edge_index=item['edge_index'], y=item['y'])
             data_list.append(data)
         print(len(data_list))
