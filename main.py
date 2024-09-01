@@ -175,7 +175,7 @@ def print_dataset_stats(dataset):
     print(f'Number of graphs per label: {label_counts}')
     print(f'maximal depth: {np.max(depths)}')
     print(f'average depth: {np.mean(depths)}')
-    return harmonic_mean
+    return harmonic_mean, avg_edges_per_graph
 
 def get_stationary_transition(P):
     n = P.shape[0]
@@ -211,7 +211,7 @@ def train_msprtgnn(train_data, num_classes, num_features, T, test_data, edge_cla
     if dataset == "upfd3" or dataset == "upfd4" and num_features==310:
         lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 512, 0.000001
     elif dataset == "upfd3" or dataset == "upfd4" and num_features==10:
-        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 256, 0.0
+        lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 128, 0.0
     elif dataset == "weibo":
         lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 64, 0.0
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
@@ -322,27 +322,37 @@ threshold_dict = {
 
 train_list = [
     "msprtGNN",
-    "upfd-sage",
-    "gcnfn" ,
+    #"upfd-sage",
+    #"gcnfn" ,
     "naive",
     "markovMSPRT",
-    "quickstop",
+    #"quickstop",
     ]
 
 test_list = [
     "msprtGNN",
-    "upfd-sage",
-    "gcnfn" ,
+    #"upfd-sage",
+    #"gcnfn" ,
     "naive",
     "markovMSPRT",
-    "quickstop",
+    #"quickstop",
     ]
+
+styles = {
+    "msprtGNN": {"linestyle": "-", "marker": "s", "color" : "blue"},
+    "upfd-sage": {"linestyle": "--", "marker": "o", "color" : "red"},
+    "gcnfn": {"linestyle": "--", "marker": "^", "color" : "green"},
+    "naive": {"linestyle": "-.", "marker": "", "color" : "orange"},
+    "markovMSPRT": {"linestyle": "-.", "marker": "", "color" : "purple"},
+    "quickstop": {"linestyle": ":", "marker": "", "color" : "blue"},
+}
+
 
 load = True
 load_gnn = load
-load_z_dataset = load
-load_alpha = load
-dataset = "weibo"
+load_z_dataset = False
+load_alpha = False
+dataset = "upfd3"
 batch_size = 32
 num_epochs = 120 if dataset == "upfd4" else 60
 hyper_tune_th = False
@@ -361,7 +371,7 @@ def main():
     num_z = num_classes * (num_classes - 1)
     train_data += val_data
     print(f'Train dataset size: {len(train_data)}, Test dataset size: {len(test_data)}')
-    T = print_dataset_stats(train_data + val_data + test_data)
+    T, avg_edges_per_graph = print_dataset_stats(train_data + val_data + test_data)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     models_dict = {}
     edge_classifier_name = "msprtGNN"
@@ -380,6 +390,7 @@ def main():
         test_loader = DataLoader(test_data, batch_size=1, shuffle=False)
 
     optimal_thrs = {}
+    t_correct_all_dict = {}
     results = []
     print("Model & Accuracy & Average Deadline & Bayesian Risk")
     for model_name in test_list:
@@ -395,7 +406,8 @@ def main():
             thresholds = [threshold_dict[dataset][model_name]]
         for th in thresholds:
             print(f"threshold:{th}")
-            result = sequential_test(model, device, test_loader, pvalue=th, model_name=model_name)
+            result, t_correct_all = sequential_test(model, device, test_loader, is_seq=False, pvalue=th, model_name=model_name, max_t=40)
+            t_correct_all_dict[model_name] = t_correct_all
             bayesian_risks[th] = result.risk
             results += [result]
             result.print_results()
@@ -406,9 +418,20 @@ def main():
     print("Model & Accuracy & Average Deadline & Bayesian Risk")
     for result in results:
         result.print_results()
-
-    print(optimal_thrs)
-
+    for model_name in test_list:
+        t = list(range(1,t_correct_all_dict[model_name].shape[0]))
+        acc = (t_correct_all_dict[model_name][1:, 0] / t_correct_all_dict[model_name][1:, 1]).tolist()
+        if model_name == "quickstop":
+            t = t[:60]
+            acc = acc[:60]
+        plt.plot(t, acc, label=model_name, linestyle=styles[model_name]["linestyle"],
+             marker=styles[model_name]["marker"])
+        coordinates = ' '.join([f"({t[i]},{acc[i]})" for i in range(len(t))])
+        print(f"\\addplot[color={styles[model_name]['color']}, mark=] coordinates")
+        print(f"{{{coordinates}}};")
+        print(f"\\addlegendentry{{{model_name}}}")
+    plt.legend()
+    plt.show()
 
 if __name__ == '__main__':
     main()

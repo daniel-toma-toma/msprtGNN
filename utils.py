@@ -41,6 +41,8 @@ def get_edge_subgraphs(data):
 
 def relabel_logits(probs, threshold=0.0):
     primary_labels = torch.argmax(probs, dim=1)
+    #new_labels = primary_labels
+    #return new_labels
     sorted_probs, sorted_indices = torch.sort(probs, descending=True, dim=1)
     secondary_labels = sorted_indices[:, 1]
     valid_secondary = sorted_probs[:, 1] >= threshold
