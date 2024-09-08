@@ -105,8 +105,8 @@ def get_combined_upfd_dataset(num_classes, features):
     generator = torch.Generator().manual_seed(42)
     train_data, val_test_data = random_split(undersampled_dataset, [train_size, val_size + test_size], generator=generator)
     val_data, test_data = random_split(val_test_data, [val_size, test_size], generator=generator)
-    #train_data += enhance(train_data)
-    return train_data, val_data, test_data, num_features
+    enhanced_train_data = enhance(train_data)
+    return train_data, val_data, test_data, num_features, enhanced_train_data
 
 def get_combined_upfd_dataloader(train_data, val_data, test_data, batch_size=32):
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)

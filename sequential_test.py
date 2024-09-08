@@ -42,7 +42,7 @@ class Results:
         self.deadline = deadline
         self.risk = risk
 
-    def print_results(self):
+    def print_bayes_results(self):
         print(f"\\texttt{{{self.model_name}}} & {self.accuracy:.2f} & {self.deadline:.2f} & {self.risk:.2f}\\\\")
 
 
@@ -94,7 +94,7 @@ def sequential_test(model, device, loader, model_name, is_seq=True, pvalue=0.7, 
                     pred_array += [pred]
                 #if T == 2: # for ablation study
                 #    break
-                if not is_seq and T < max_t:
+                if not is_seq and T <= max_t:
                     if T == max_t:
                         break
                     t_correct_all[T][0] += pred.eq(data.y).sum().item() #correct prediction

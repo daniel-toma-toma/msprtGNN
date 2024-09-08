@@ -2,6 +2,18 @@ import matplotlib.pyplot as plt
 import torch
 from torch_geometric.data import Batch, Data
 from tqdm import tqdm
+import torch
+import numpy as np
+from sklearn.cluster import KMeans, SpectralClustering, DBSCAN, AgglomerativeClustering, Birch, BisectingKMeans
+from sklearn.neighbors import kneighbors_graph
+from scipy.spatial.distance import cdist
+
+def fit_kmeans(vectors, n_clusters, random_state=None):
+    print(vectors.shape)
+    vectors_np = vectors.detach().numpy()
+    kmeans = KMeans(n_clusters=n_clusters, random_state=random_state)
+    kmeans.fit(vectors_np)
+    return kmeans
 
 def plot_dict(model_name, dictionary):
     # Extract keys and values
@@ -65,7 +77,8 @@ def classify_edges(classifier, data, num_classes, num_z):
         data.z = relabel_logits(out, threshold=0.0)
     return data
 
-def z_classify_dataset(dataset, classifier, num_classes, num_z, name="z_class_dataset.pt", load=False):
+def z_classify_dataset(dataset, classifier, num_classes, num_z, name="z_class_dataset.pt", load=False, kmeans_filename=None, is_train=True):
+    #return k_means_z_classify_dataset(dataset, classifier, num_classes, num_z, name=name, load=load, is_train=is_train, kmeans_filename=kmeans_filename)
     if load:
         z_classified_dataset = torch.load(name, weights_only=False)
     else:
@@ -74,3 +87,63 @@ def z_classify_dataset(dataset, classifier, num_classes, num_z, name="z_class_da
             z_classified_dataset += [classify_edges(classifier, dataset[i], num_z, num_classes)]
         torch.save(z_classified_dataset, name)
     return z_classified_dataset
+
+def kmeans_plot(kmeans, Phi_vectors):
+    from sklearn.decomposition import PCA
+    import matplotlib.pyplot as plt
+    pca = PCA(n_components=2)
+    reduced_data = pca.fit_transform(Phi_vectors)
+    plt.figure(figsize=(10, 8))
+    plt.scatter(reduced_data[:, 0], reduced_data[:, 1], c=kmeans.labels_, cmap='viridis', s=50, alpha=0.7)
+    plt.title('K-Means Clustering of Phi Vectors')
+    plt.xlabel('PCA Component 1')
+    plt.ylabel('PCA Component 2')
+    plt.colorbar(label='Cluster Label')
+    plt.show()
+
+def get_cluster_centroids(X, labels):
+    unique_labels = np.unique(labels)
+    centroids = np.array([X[labels == label].mean(axis=0) for label in unique_labels])
+    return centroids
+
+def predict_new_data(new_data, centroids):
+    distances = cdist(new_data, centroids, metric='euclidean')  # Compute distances to centroids
+    new_data_labels = np.argmin(distances, axis=1)  # Assign to the nearest cluster
+    return new_data_labels
+
+def k_means_z_classify_dataset(dataset, classifier, num_classes, num_z, name="z_class_dataset.pt", load=False, is_train=True, kmeans_filename=None):
+    if load:
+        z_classified_dataset = torch.load(name, weights_only=False)
+    else:
+        z_classified_dataset = []
+        Phi_vectors = []
+        if is_train:
+            for i in tqdm(range(len(dataset)), desc=f'z-classifying dataset'):
+                edge_subgraphs = get_edge_subgraphs(dataset[i])
+                edge_subgraphs = Batch.from_data_list(edge_subgraphs)
+                out = torch.exp(classifier(edge_subgraphs))
+                Phi_vectors.append(out)
+            Phi_vectors = torch.vstack(Phi_vectors)
+            Phi_vectors = Phi_vectors.detach().numpy()
+            #kmeans = KMeans(n_clusters=num_z, random_state=42)
+            kmeans = Birch(n_clusters=num_z, threshold=0.001)
+            #kmeans = BisectingKMeans(n_clusters=num_z, random_state=42)
+            kmeans.fit(Phi_vectors)
+            torch.save(kmeans, kmeans_filename)
+            kmeans_plot(kmeans, Phi_vectors)
+        else:
+            kmeans = torch.load(kmeans_filename)
+        z_classified_dataset = []
+        for i in tqdm(range(len(dataset)), desc=f'z-classifying dataset'):
+            edge_subgraphs = get_edge_subgraphs(dataset[i])
+            edge_subgraphs = Batch.from_data_list(edge_subgraphs)
+            out = torch.exp(classifier(edge_subgraphs))
+            Phi_vectors = out.detach().numpy()
+            #z_label = kmeans.predict(Phi_vectors)
+            centroids = get_cluster_centroids(Phi_vectors, kmeans.labels_)
+            z_label = predict_new_data(Phi_vectors, centroids)
+            dataset[i].z = torch.tensor(z_label, dtype=torch.int32)
+            z_classified_dataset += [dataset[i]]
+        torch.save(z_classified_dataset, name)
+    return z_classified_dataset
+

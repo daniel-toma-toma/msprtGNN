@@ -87,7 +87,7 @@ def init_transition_counter(eta_iid, num_z, s=10):
     transition_counts[:] = eta_iid * s
     return transition_counts
 def calc_alpha(loader, device, num_z, label, eta_iid, num_classes):
-    transition_counts = init_transition_counter(eta_iid, num_z, 1/(10*num_z))
+    transition_counts = init_transition_counter(eta_iid, num_z, 1/(3*num_z))
     for data in tqdm(loader, desc=f'calculating alpha for class {label}'):
         if data.y != label:
             continue

@@ -36,6 +36,7 @@ def get_iid_eta(dataset_name, dataset, num_classes, num_z, load=False):
         iid_label_counter = torch.load(tmp_dir+dataset_name+"_iid_label_counter.pt", weights_only=True)
         return iid_eta, iid_label_counter
     else:
+
         loader = DataLoader(dataset, batch_size=1, shuffle=True)
         iid_eta = torch.zeros((num_classes, num_z))
         iid_label_counter = torch.zeros((num_classes, num_z))

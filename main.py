@@ -56,7 +56,7 @@ def test(model, loader, device):
         total_examples += data.num_graphs
         all_predicted = np.append(all_predicted, pred)
         all_labels = np.append(all_labels, data.y)
-    print(classification_report(all_labels, all_predicted, zero_division=0.0))
+    print(classification_report(all_labels, all_predicted, zero_division=0.0, digits=4))
     min_recall = np.min(recall_score(all_labels, all_predicted, average=None))
     acc = total_correct / total_examples
     return acc
@@ -188,21 +188,23 @@ def get_stationary_transition(P):
 
 def train_naive(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
     filename = tmp_dir+dataset + "_z_class_train_dataset.pt"
-    z_classified_train_dataset = utils.z_classify_dataset(train_data, edge_classifier, num_classes, num_z, name=filename, load=load_z_dataset)
+    z_classified_train_dataset = utils.z_classify_dataset(train_data, edge_classifier, num_classes, num_z, name=filename, load=load_z_dataset,kmeans_filename=kmeans_filename)
     iid_eta, iid_label_counter = get_iid_eta(dataset, z_classified_train_dataset, num_classes, num_z, load=load_alpha)
     naive_iid_model = sequential_iid(num_classes, iid_eta)
+    #plot_eta_iid(iid_eta, num_classes)
     return naive_iid_model
 
 def train_markovmsprt(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
     filename = tmp_dir+dataset + "_z_class_train_dataset.pt"
-    z_classified_train_dataset = utils.z_classify_dataset(train_data, edge_classifier, num_classes, num_z, name=filename, load=True)
+    z_classified_train_dataset = utils.z_classify_dataset(train_data, edge_classifier, num_classes, num_z, name=filename, load=True, kmeans_filename=kmeans_filename)
     alpha, eta = get_alpha_and_eta(dataset, z_classified_train_dataset, device, num_classes, num_z, load=load_alpha)
     markov_model = sequential_markov(num_classes, alpha, eta)
     return markov_model
 
 def train_quickstop(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z):
     filename = tmp_dir+dataset + "_z_class_train_dataset.pt"
-    z_classified_train_dataset = utils.z_classify_dataset(train_data, edge_classifier, num_classes, num_z, name=filename, load=True)
+
+    z_classified_train_dataset = utils.z_classify_dataset(train_data, edge_classifier, num_classes, num_z, name=filename, load=True, kmeans_filename=kmeans_filename)
     quick_alpha, quick_eta = get_quickstop_alpha_and_eta(dataset, z_classified_train_dataset, device, num_classes, num_z, load=load)
     quickstop_model = quickstop(num_classes, quick_alpha, quick_eta)
     return quickstop_model
@@ -212,7 +214,7 @@ def train_msprtgnn(train_data, num_classes, num_features, T, test_data, edge_cla
         lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 512, 0.000001
     elif dataset == "upfd3" or dataset == "upfd4" and num_features==10:
         lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 128, 0.0
-    elif dataset == "weibo":
+    elif dataset == "weibo" or dataset == "weibo3":
         lr, weight_decay, hidden_dim, l1_lambda = 0.001, 0.001, 64, 0.0
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=1, shuffle=True)
@@ -264,7 +266,6 @@ models_train_fn_dict = {
     "naive" : train_naive,
     "markovMSPRT" : train_markovmsprt,
     "quickstop" : train_quickstop,
-    #"HGFND" : train_hgfnd,
 }
 
 '''
@@ -318,6 +319,7 @@ threshold_dict = {
     "upfd3" : upfd3_threshold_dict,
     "upfd4" : upfd4_threshold_dict,
     "weibo": weibo_threshold_dict,
+    "weibo3": weibo_threshold_dict,
 }
 
 train_list = [
@@ -332,7 +334,7 @@ train_list = [
 test_list = [
     "msprtGNN",
     #"upfd-sage",
-    #"gcnfn" ,
+    #"gcnfn",
     "naive",
     "markovMSPRT",
     #"quickstop",
@@ -357,18 +359,23 @@ batch_size = 32
 num_epochs = 120 if dataset == "upfd4" else 60
 hyper_tune_th = False
 features="profile"
+kmeans_filename = tmp_dir + dataset + "_kmeans.pt"
+max_t = 41 if dataset == "weibo" else 41
 
 def main():
     if dataset == "upfd3":
         num_classes = 3
-        train_data, val_data, test_data, num_features = get_combined_upfd_dataset(num_classes, features)
+        train_data, val_data, test_data, num_features, enhanced_train_data = get_combined_upfd_dataset(num_classes, features)
     if dataset == "upfd4":
         num_classes = 4
-        train_data, val_data, test_data, num_features = get_combined_upfd_dataset(num_classes, features)
+        train_data, val_data, test_data, num_features, enhanced_train_data = get_combined_upfd_dataset(num_classes, features)
     elif dataset == "weibo":
+        num_classes = 2
+        train_data, val_data, test_data, num_features, enhanced_train_data = get_weibo_dataset(num_classes, features)
+    elif dataset == "weibo3":
         num_classes = 3
-        train_data, val_data, test_data, num_features = get_weibo_dataset(num_classes, features)
-    num_z = num_classes * (num_classes - 1)
+        train_data, val_data, test_data, num_features, enhanced_train_data = get_weibo_dataset(num_classes, features)
+    num_z = int(num_classes * (num_classes-1)) - 0
     train_data += val_data
     print(f'Train dataset size: {len(train_data)}, Test dataset size: {len(test_data)}')
     T, avg_edges_per_graph = print_dataset_stats(train_data + val_data + test_data)
@@ -378,13 +385,15 @@ def main():
     edge_classifier = None
     for model_name in train_list:
         train_fn = models_train_fn_dict[model_name]
-        model = train_fn(train_data, num_classes, num_features, T, test_data, edge_classifier, num_z)
+        #train_d = train_data + enhanced_train_data if model_name == "msprtGNN" or model_name == "gcnfn" or model_name == "upfd-sage" else train_data
+        train_d = train_data
+        model = train_fn(train_d, num_classes, num_features, T, test_data, edge_classifier, num_z)
         models_dict[model_name] = model
         if model_name == edge_classifier_name:
             edge_classifier = model
     if edge_classifier is not None:
         filename = tmp_dir+dataset + "_z_class_test_dataset.pt"
-        z_classified_test_dataset = utils.z_classify_dataset(test_data, edge_classifier, num_classes, num_z,name=filename, load=load_z_dataset)
+        z_classified_test_dataset = utils.z_classify_dataset(test_data, edge_classifier, num_classes, num_z,name=filename, load=load_z_dataset, is_train=False, kmeans_filename=kmeans_filename)
         test_loader = DataLoader(z_classified_test_dataset, batch_size=1, shuffle=True)
     else:
         test_loader = DataLoader(test_data, batch_size=1, shuffle=False)
@@ -406,18 +415,18 @@ def main():
             thresholds = [threshold_dict[dataset][model_name]]
         for th in thresholds:
             print(f"threshold:{th}")
-            result, t_correct_all = sequential_test(model, device, test_loader, is_seq=False, pvalue=th, model_name=model_name, max_t=40)
+            result, t_correct_all = sequential_test(model, device, test_loader, is_seq=False, pvalue=th, model_name=model_name, max_t=max_t)
             t_correct_all_dict[model_name] = t_correct_all
             bayesian_risks[th] = result.risk
             results += [result]
-            result.print_results()
+            result.print_bayes_results()
         if hyper_tune_th:
             min_th, min_bayesian_risk = utils.find_min_value_key(bayesian_risks)
             optimal_thrs[model_name] = min_th
             utils.plot_dict(model_name, bayesian_risks)
     print("Model & Accuracy & Average Deadline & Bayesian Risk")
     for result in results:
-        result.print_results()
+        result.print_bayes_results()
     for model_name in test_list:
         t = list(range(1,t_correct_all_dict[model_name].shape[0]))
         acc = (t_correct_all_dict[model_name][1:, 0] / t_correct_all_dict[model_name][1:, 1]).tolist()
@@ -432,6 +441,24 @@ def main():
         print(f"\\addlegendentry{{{model_name}}}")
     plt.legend()
     plt.show()
+
+    vip_t = [1] + list(range(5, max_t, 5))
+    t_labels = [f"$t={int(t)}$" for t in vip_t]
+    header = " & ".join(["\\textbf{Model}"] + t_labels) + " & Full \\\\"
+    columns = 'c' * (len(t_labels) + 2)
+    columns_header = f"\\begin{{tabular}}{{|{'|'.join(columns)}|}}"
+    print(columns_header)
+    print("\\hline")
+    print(header)
+    print("\\hline")
+    for model_name in test_list:
+        t = list(range(1,t_correct_all_dict[model_name].shape[0]))
+        acc = (t_correct_all_dict[model_name][1:, 0] / t_correct_all_dict[model_name][1:, 1]).tolist()
+        formatted_acc = ' & '.join([f"{acc[i-1]:.3f}" for i in vip_t]) + " & "
+        #print(f"\\texttt{{{model_name}}} & {formatted_acc}\\\\")
+        print(f"mean accuracy {np.mean(acc):.3f}")
+    print("\\hline")
+
 
 if __name__ == '__main__':
     main()
