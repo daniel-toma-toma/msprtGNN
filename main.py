@@ -17,6 +17,8 @@ from torch_geometric.nn import global_add_pool
 import utils
 from upfd_gnn import upfdGNN
 from gcnfn import GCNFN
+import argparse
+from decision_thresholds import *
 
 sci_mode=False
 np.set_printoptions(suppress=not sci_mode)
@@ -268,76 +270,22 @@ models_train_fn_dict = {
     "quickstop" : train_quickstop,
 }
 
-'''
-upfd3_threshold_dict = {
-    "msprtGNN" : 0.62,
-    #"upfd-sage": 0.9,
-    "gcnfn" : 0.9,
-    "naive" : 0.998,
-    "markovMSPRT" : 0.99998,
-    "quickstop" : 0.93,
-    #"HGFND"" : train_hgfnd,
-}
-
-upfd4_threshold_dict = {
-    "msprtGNN" : 0.62,
-    #"upfd-sage": 0.9,
-    "gcnfn" : 0.9,
-    "naive" : 0.998,
-    "markovMSPRT" : 0.99998,
-    "quickstop" : 0.93,
-    #"HGFND"" : train_hgfnd,
-}
-'''
-
-# for 10 features
-upfd4_threshold_dict = {
-    "msprtGNN" : 0.5,
-    "upfd-sage": 0.8,
-    "gcnfn" : 0.7,
-    "naive" : 0.998,
-    "markovMSPRT" : 0.95,
-    "quickstop" : 0.93,
-}
-upfd3_threshold_dict = {
-    "msprtGNN" : 0.72,#0.75,
-    "upfd-sage": 0.95,
-    "gcnfn" : 0.95,
-    "naive" : 0.998,
-    "markovMSPRT" : 0.95,
-    "quickstop" : 0.93,
-}
-weibo_threshold_dict = {
-    "msprtGNN" : 0.36, #0.42,
-    "upfd-sage": 0.4,
-    "gcnfn" : 0.55,
-    "naive" : 0.9,
-    "markovMSPRT" : 0.99,
-    "quickstop" : 0.9,
-}
-threshold_dict = {
-    "upfd3" : upfd3_threshold_dict,
-    "upfd4" : upfd4_threshold_dict,
-    "weibo": weibo_threshold_dict,
-    "weibo3": weibo_threshold_dict,
-}
-
 train_list = [
     "msprtGNN",
-    #"upfd-sage",
-    #"gcnfn" ,
+    "upfd-sage",
+    "gcnfn" ,
     "naive",
     "markovMSPRT",
-    #"quickstop",
+    "quickstop",
     ]
 
 test_list = [
     "msprtGNN",
-    #"upfd-sage",
-    #"gcnfn",
+    "upfd-sage",
+    "gcnfn",
     "naive",
     "markovMSPRT",
-    #"quickstop",
+    "quickstop",
     ]
 
 styles = {
@@ -349,16 +297,27 @@ styles = {
     "quickstop": {"linestyle": ":", "marker": "", "color" : "blue"},
 }
 
+parser = argparse.ArgumentParser(description='Train models for UPFD dataset')
+parser.add_argument('--dataset', type=str, choices=['upfd3', 'upfd4', 'weibo', 'weibo3'], required=True, help='The dataset to use')
+parser.add_argument('--features', type=str, choices=['profile', 'content'], default='profile', help='Features to use in the model')
+parser.add_argument('--compare', action='store_true', default=True, help='Whether to run comparison between models')
+parser.add_argument('--load', action='store_true', default=False, help='Whether to load precomputed models')
 
-load = True
+args = parser.parse_args()
+dataset = args.dataset
+features = args.features
+compare = args.compare
+load = args.load
+
+#load = True
 load_gnn = load
-load_z_dataset = False
-load_alpha = False
-dataset = "upfd3"
+load_z_dataset = load
+load_alpha = load
+#dataset = "upfd3"
 batch_size = 32
 num_epochs = 120 if dataset == "upfd4" else 60
 hyper_tune_th = False
-features="profile"
+#features="profile"
 kmeans_filename = tmp_dir + dataset + "_kmeans.pt"
 max_t = 41 if dataset == "weibo" else 41
 
@@ -407,15 +366,12 @@ def main():
         model = models_dict[model_name]
         bayesian_risks = {}
         if hyper_tune_th:
-            #base = 1-0.71
-            #thresholds = [1-base*4, 1-base*2, 1-base*np.sqrt(2), 1-base, 1-base/np.sqrt(2), 1-base/2, 1-base/4]
             thresholds = [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8]
-            #thresholds = [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9] #gcnfn
         else:
             thresholds = [threshold_dict[dataset][model_name]]
         for th in thresholds:
             print(f"threshold:{th}")
-            result, t_correct_all = sequential_test(model, device, test_loader, is_seq=False, pvalue=th, model_name=model_name, max_t=max_t)
+            result, t_correct_all = sequential_test(model, device, test_loader, is_seq=(not compare), pvalue=th, model_name=model_name, max_t=max_t)
             t_correct_all_dict[model_name] = t_correct_all
             bayesian_risks[th] = result.risk
             results += [result]
