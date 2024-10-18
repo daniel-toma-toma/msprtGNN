@@ -1,4 +1,4 @@
-If you use the code in your project, please cite the following paper:
+If you find our work interesting, please consider citing
 
 ```bash
 @misc{toma2024sequentialclassificationmisinformation,
