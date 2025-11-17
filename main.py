@@ -19,6 +19,7 @@ from upfd_gnn import upfdGNN
 from gcnfn import GCNFN
 import argparse
 from decision_thresholds import *
+from more_tests.temperature_scaling import temperature_scaling_test, get_ece, get_ece_from_logits
 
 sci_mode=False
 np.set_printoptions(suppress=not sci_mode)
@@ -225,8 +226,6 @@ def train_msprtgnn(train_data, num_classes, num_features, T, test_data, edge_cla
     if not load_gnn:
         train_loop(gnn_classifier, train_loader, test_loader, device, lr, weight_decay, dataset, l1_lambda, filename, epochs=num_epochs)
     gnn_classifier.load_state_dict(torch.load(filename, weights_only=True))
-    gnn_classifier.T = T / 2
-    gnn_classifier.pool = global_add_pool
     test_acc = test(gnn_classifier, test_loader, device)
     return gnn_classifier
 
@@ -272,20 +271,20 @@ models_train_fn_dict = {
 
 train_list = [
     "msprtGNN",
-    "upfd-sage",
-    "gcnfn" ,
-    "naive",
-    "markovMSPRT",
-    "quickstop",
+    #"upfd-sage",
+    #"gcnfn" ,
+    #"naive",
+    #"markovMSPRT",
+    #"quickstop",
     ]
 
 test_list = [
     "msprtGNN",
-    "upfd-sage",
-    "gcnfn",
-    "naive",
-    "markovMSPRT",
-    "quickstop",
+    #"upfd-sage",
+    #"gcnfn",
+    #"naive",
+    #"markovMSPRT",
+    #"quickstop",
     ]
 
 styles = {
@@ -300,14 +299,16 @@ styles = {
 parser = argparse.ArgumentParser(description='Train models for UPFD dataset')
 parser.add_argument('--dataset', type=str, choices=['upfd3', 'upfd4', 'weibo', 'weibo3'], required=True, help='The dataset to use')
 parser.add_argument('--features', type=str, choices=['profile', 'content'], default='profile', help='Features to use in the model')
-parser.add_argument('--compare', action='store_true', default=True, help='Whether to run comparison between models')
+parser.add_argument('--compare', action='store_true', default=False, help='Whether to run comparison between models')
 parser.add_argument('--load', action='store_true', default=False, help='Whether to load precomputed models')
+parser.add_argument('--temp_scale', action='store_true', default=False, help='Whether to perform temp_scale test')
 
 args = parser.parse_args()
 dataset = args.dataset
 features = args.features
 compare = args.compare
 load = args.load
+temp_scale = args.temp_scale
 
 #load = True
 load_gnn = load
@@ -335,7 +336,8 @@ def main():
         num_classes = 3
         train_data, val_data, test_data, num_features, enhanced_train_data = get_weibo_dataset(num_classes, features)
     num_z = int(num_classes * (num_classes-1)) - 0
-    train_data += val_data
+    if not temp_scale:
+        test_data += val_data
     print(f'Train dataset size: {len(train_data)}, Test dataset size: {len(test_data)}')
     T, avg_edges_per_graph = print_dataset_stats(train_data + val_data + test_data)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -351,69 +353,101 @@ def main():
         if model_name == edge_classifier_name:
             edge_classifier = model
     if edge_classifier is not None:
-        filename = tmp_dir+dataset + "_z_class_test_dataset.pt"
-        z_classified_test_dataset = utils.z_classify_dataset(test_data, edge_classifier, num_classes, num_z,name=filename, load=load_z_dataset, is_train=False, kmeans_filename=kmeans_filename)
-        test_loader = DataLoader(z_classified_test_dataset, batch_size=1, shuffle=True)
+        test_filename = tmp_dir+dataset + "_z_class_test_dataset.pt"
+        val_filename = tmp_dir+dataset + "_z_class_val_dataset.pt"
+        z_test_data = utils.z_classify_dataset(test_data, edge_classifier, num_classes, num_z,name=test_filename, load=load_z_dataset, is_train=False, kmeans_filename=kmeans_filename)
+        val_data = utils.z_classify_dataset(val_data, edge_classifier, num_classes, num_z,name=val_filename, load=load_z_dataset, is_train=False, kmeans_filename=kmeans_filename)
+        test_loader = DataLoader(z_test_data, batch_size=1, shuffle=True)
     else:
         test_loader = DataLoader(test_data, batch_size=1, shuffle=False)
 
     optimal_thrs = {}
     t_correct_all_dict = {}
     results = []
-    print("Model & Accuracy & Average Deadline & Bayesian Risk")
-    for model_name in test_list:
-        print(f"Testing model {model_name}")
-        model = models_dict[model_name]
-        bayesian_risks = {}
-        if hyper_tune_th:
-            thresholds = [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8]
-        else:
-            thresholds = [threshold_dict[dataset][model_name]]
-        for th in thresholds:
-            print(f"threshold:{th}")
-            result, t_correct_all = sequential_test(model, device, test_loader, is_seq=(not compare), pvalue=th, model_name=model_name, max_t=max_t)
-            t_correct_all_dict[model_name] = t_correct_all
-            bayesian_risks[th] = result.risk
-            results += [result]
+    if not temp_scale:
+        print("Model & Accuracy & Average Deadline & Bayesian Risk")
+        for model_name in test_list:
+            print(f"Testing model {model_name}")
+            model = models_dict[model_name]
+            bayesian_risks = {}
+            if hyper_tune_th:
+                thresholds = [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8]
+            else:
+                thresholds = [threshold_dict[dataset][model_name]]
+            for th in thresholds:
+                print(f"threshold:{th}")
+                result, t_correct_all, preds, labels, cfsc, t_logits_all, t_labels_all = sequential_test(model, device, test_loader, is_seq=(not compare), threshold=th, model_name=model_name, max_t=max_t)
+                t_correct_all_dict[model_name] = t_correct_all
+                bayesian_risks[th] = result.risk
+                results += [result]
+                result.print_bayes_results()
+            if hyper_tune_th:
+                min_th, min_bayesian_risk = utils.find_min_value_key(bayesian_risks)
+                optimal_thrs[model_name] = min_th
+                utils.plot_dict(model_name, bayesian_risks)
+        print("Model & Accuracy & Average Deadline & Bayesian Risk")
+        for result in results:
             result.print_bayes_results()
-        if hyper_tune_th:
-            min_th, min_bayesian_risk = utils.find_min_value_key(bayesian_risks)
-            optimal_thrs[model_name] = min_th
-            utils.plot_dict(model_name, bayesian_risks)
-    print("Model & Accuracy & Average Deadline & Bayesian Risk")
-    for result in results:
-        result.print_bayes_results()
-    for model_name in test_list:
-        t = list(range(1,t_correct_all_dict[model_name].shape[0]))
-        acc = (t_correct_all_dict[model_name][1:, 0] / t_correct_all_dict[model_name][1:, 1]).tolist()
-        if model_name == "quickstop":
-            t = t[:60]
-            acc = acc[:60]
-        plt.plot(t, acc, label=model_name, linestyle=styles[model_name]["linestyle"],
-             marker=styles[model_name]["marker"])
-        coordinates = ' '.join([f"({t[i]},{acc[i]})" for i in range(len(t))])
-        print(f"\\addplot[color={styles[model_name]['color']}, mark=] coordinates")
-        print(f"{{{coordinates}}};")
-        print(f"\\addlegendentry{{{model_name}}}")
-    plt.legend()
-    plt.show()
+        for model_name in test_list:
+            t = list(range(1,t_correct_all_dict[model_name].shape[0]))
+            acc = (t_correct_all_dict[model_name][1:, 0] / t_correct_all_dict[model_name][1:, 1]).tolist()
+            if model_name == "quickstop":
+                t = t[:60]
+                acc = acc[:60]
+            plt.plot(t, acc, label=model_name, linestyle=styles[model_name]["linestyle"],
+                 marker=styles[model_name]["marker"])
+            coordinates = ' '.join([f"({t[i]},{acc[i]})" for i in range(len(t))])
+            print(f"\\addplot[color={styles[model_name]['color']}, mark=] coordinates")
+            print(f"{{{coordinates}}};")
+            print(f"\\addlegendentry{{{model_name}}}")
+        plt.legend()
+        plt.show()
 
-    vip_t = [1] + list(range(5, max_t, 5))
-    t_labels = [f"$t={int(t)}$" for t in vip_t]
-    header = " & ".join(["\\textbf{Model}"] + t_labels) + " & Full \\\\"
-    columns = 'c' * (len(t_labels) + 2)
-    columns_header = f"\\begin{{tabular}}{{|{'|'.join(columns)}|}}"
-    print(columns_header)
-    print("\\hline")
-    print(header)
-    print("\\hline")
-    for model_name in test_list:
-        t = list(range(1,t_correct_all_dict[model_name].shape[0]))
-        acc = (t_correct_all_dict[model_name][1:, 0] / t_correct_all_dict[model_name][1:, 1]).tolist()
-        formatted_acc = ' & '.join([f"{acc[i-1]:.3f}" for i in vip_t]) + " & "
-        #print(f"\\texttt{{{model_name}}} & {formatted_acc}\\\\")
-        print(f"mean accuracy {np.mean(acc):.3f}")
-    print("\\hline")
+        vip_t = [1] + list(range(5, max_t, 5))
+        t_labels = [f"$t={int(t)}$" for t in vip_t]
+        header = " & ".join(["\\textbf{Model}"] + t_labels) + " & Full \\\\"
+        columns = 'c' * (len(t_labels) + 2)
+        columns_header = f"\\begin{{tabular}}{{|{'|'.join(columns)}|}}"
+        print(columns_header)
+        print("\\hline")
+        print(header)
+        print("\\hline")
+        for model_name in test_list:
+            t = list(range(1,t_correct_all_dict[model_name].shape[0]))
+            acc = (t_correct_all_dict[model_name][1:, 0] / t_correct_all_dict[model_name][1:, 1]).tolist()
+            formatted_acc = ' & '.join([f"{acc[i-1]:.3f}" for i in vip_t]) + " & "
+            #print(f"\\texttt{{{model_name}}} & {formatted_acc}\\\\")
+            print(f"mean accuracy {np.mean(acc):.3f}")
+        print("\\hline")
+
+    if temp_scale:
+        bayesian_risks = {}
+        #thresholds = [0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.99]
+        for model_name in test_list:
+            model = models_dict[model_name]
+            test_ece, test_nll = get_ece(model, test_data, device, dataset+"_"+model_name+"_before")
+            print(f"test ece:{test_ece}, test nll:{test_nll}, before temperature calibration for {model_name}")
+            calibrated_model = temperature_scaling_test(model, val_data, device)
+            torch.save(calibrated_model.state_dict(), tmp_dir+dataset+"_"+model_name+"_temp_calib.pt")
+            test_ece, test_nll = get_ece(calibrated_model, test_data, device, dataset+"_"+model_name+"_after")
+            print(f"test ece:{test_ece}, test nll:{test_nll}, temperature: {calibrated_model.T.detach().item()}, after temperature calibration for {model_name}")
+            result, t_correct_all, preds, labels, confidences, t_logits_all, t_labels_all = sequential_test(calibrated_model, device, test_loader, model_name=model_name,
+                    is_seq=False, threshold=1, max_t=max_t, return_logits=True)
+            times = [5, 10, 20 ,30]
+            ece_per_t = {}
+            for t in times:
+                logits =  t_logits_all[t]
+                labels = t_labels_all[t].long()
+                nll, ece = get_ece_from_logits(logits, labels, num_classes)
+                ece_per_t[t] = ece
+            print(ece_per_t)
+            t_correct_all_dict[model_name] = t_correct_all
+            bayesian_risks[model_name] = result.risk
+            results += [result]
+        print("Model & Accuracy & Average Deadline & Bayesian Risk")
+        for result in results:
+            result.print_bayes_results()
+
 
 
 if __name__ == '__main__':

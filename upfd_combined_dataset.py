@@ -99,8 +99,8 @@ def get_combined_upfd_dataset(num_classes, features):
     full_politifact_dataset = politifact_train + politifact_val + politifact_test
     full_dataset = full_gossipcop_dataset + full_politifact_dataset
     undersampled_dataset = undersample(full_dataset)
-    train_size = int(len(undersampled_dataset) * 0.4)
-    val_size = int(len(undersampled_dataset) * 0.4)
+    train_size = int(len(undersampled_dataset) * 0.8)
+    val_size = int(len(undersampled_dataset) * 0.05)
     test_size = len(undersampled_dataset) - val_size - train_size
     generator = torch.Generator().manual_seed(42)
     train_data, val_test_data = random_split(undersampled_dataset, [train_size, val_size + test_size], generator=generator)

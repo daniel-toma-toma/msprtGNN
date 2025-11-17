@@ -34,7 +34,7 @@ class GCNFN(torch.nn.Module):
 	def reset(self):
 		pass
 
-	def forward(self, data):
+	def forward(self, data, return_logits=False):
 		x, edge_index, batch = data.x, data.edge_index, data.batch
 
 		x = F.selu(self.conv1(x, edge_index))
@@ -42,5 +42,10 @@ class GCNFN(torch.nn.Module):
 		x = F.selu(global_mean_pool(x, batch))
 		x = F.selu(self.fc1(x))
 		x = F.dropout(x, p=0.5, training=self.training)
-		x = F.log_softmax(self.fc2(x), dim=-1)
+		logits = self.fc2(x)
+		x = F.log_softmax(logits, dim=-1)
 		return x
+		if return_logits:
+			return logits
+		else:
+			return x

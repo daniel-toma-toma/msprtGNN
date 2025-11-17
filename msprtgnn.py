@@ -20,9 +20,9 @@ class GIN_markov(torch.nn.Module):
         self.conv1 = GINConv(nn, train_eps=True, eps=3.0)
         self.pool = global_mean_pool
         #self.T = torch.nn.Parameter(torch.tensor(1.0))
-        self.T = 1.0
+        self.T = torch.tensor(1.0)
 
-    def forward(self, data):
+    def forward(self, data, return_logits=False):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         x = self.mlp(x)
 
@@ -30,9 +30,13 @@ class GIN_markov(torch.nn.Module):
         z = torch.cat([F.log_softmax(z, dim=1)], dim=0)
         z = self.pool(z, batch)  # log(Pr(Zi | Fi-1))
         z = z / self.T
-        z = F.dropout(z, p=0.5, training=self.training)
-        z = F.log_softmax(z, dim=1)
+        logits = F.dropout(z, p=0.5, training=self.training)
+        z = F.log_softmax(logits, dim=1)
         return z
+        if return_logits:
+            return logits
+        else:
+            return z
 
     def reset(self):
         pass

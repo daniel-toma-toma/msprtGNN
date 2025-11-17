@@ -55,7 +55,7 @@ class WeiboDataset(InMemoryDataset):
         self.save(data_list, self.processed_paths[0])
 
 class StandardizeFeatures(BaseTransform):
-    def __call__(self, data):
+    def forward(self, data):
         x = data.x
         mean = x.mean(dim=0, keepdim=True)
         std = x.std(dim=0, keepdim=True)

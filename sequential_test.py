@@ -51,14 +51,14 @@ class Results:
 # result.print_results()
 
 #def calc_risk(pred_list, label_list, T_list, c_prop=1.0, c_err=100000.0):
-def calc_risk(pred_list, label_list, T_list, c_prop=1.0, c_err=1000.0):
+def calc_risk(pred_list, label_list, T_list, c_prop=0.05, c_err=10):
     propagation_risk = c_prop * np.mean(T_list)
     count_wrong_pred = sum(1 for pred, label in zip(pred_list, label_list) if pred != label)
     wrong_pred_error = count_wrong_pred / len(pred_list)
     error_risk = c_err * wrong_pred_error
     return error_risk + propagation_risk
 
-def sequential_test(model, device, loader, model_name, is_seq=True, pvalue=0.7, eps = 0.2, max_t=1000):
+def sequential_test(model, device, loader, model_name, is_seq=True, threshold=0.7, eps = 0.2, max_t=1000, return_logits=False):
     correct = 0
     num_nonconverge = 0
     n = 0
@@ -69,9 +69,14 @@ def sequential_test(model, device, loader, model_name, is_seq=True, pvalue=0.7, 
     full_trace_T_sum = 0
     all_predicted = np.array([])
     all_labels = np.array([])
+    posterior_pr_t = np.array([])
     t_correct_all = np.zeros((max_t, 2))
+    #t_logits_all = np.zeros((max_t, len(loader), model.num_classes))
+    t_logits_all = [torch.empty((0, model.num_classes)) for _ in range(max_t)]
+    t_labels_all = [torch.empty((0)) for _ in range(max_t)]
+
     model.eval()
-    for data in tqdm(loader, desc=f'testing'):
+    for data in tqdm(loader, desc=f'sequential_test'):
         model.reset()
         data = data.to(device)
         full_trace_T_sum += data.num_nodes
@@ -82,24 +87,28 @@ def sequential_test(model, device, loader, model_name, is_seq=True, pvalue=0.7, 
             did_converge = False
             T = 0
             for subgraph in add_nodes_by_posting_time(data):
-                out = torch.exp(model(subgraph)).squeeze()
+                if return_logits:
+                    out = model(subgraph, return_logits=return_logits).squeeze()
+                else:
+                    out = torch.exp(model(subgraph)).squeeze()
                 posterior_pr = torch.max(out)
                 pred = out.argmax(dim=0)
+                #t_logits_all[T, n, :] = out
+                t_logits_all[T] = torch.vstack([t_logits_all[T], out])
+                t_labels_all[T] = torch.vstack([t_labels_all[T].unsqueeze(1), data.y.unsqueeze(1)]).squeeze(1)
                 T += 1
-                if (is_seq and subgraph.num_nodes > 2 and posterior_pr > pvalue and pred_array[-1] == pred and posterior_pr_array[-1] > pvalue - eps):
+                #if (is_seq and subgraph.num_nodes > 2 and posterior_pr > threshold and pred_array[-1] == pred and posterior_pr_array[-1] > threshold - eps):
+                if (is_seq and subgraph.num_nodes > 1 and posterior_pr > threshold):
                     did_converge = True
                     break
                 else:
                     posterior_pr_array += [posterior_pr]
                     pred_array += [pred]
-                #if T == 2: # for ablation study
-                #    break
                 if not is_seq and T <= max_t:
                     if T == max_t:
                         break
                     t_correct_all[T][0] += pred.eq(data.y).sum().item() #correct prediction
                     t_correct_all[T][1] += 1 #all predictions
-
             if not did_converge:
                 num_nonconverge += 1
         n += 1
@@ -110,11 +119,10 @@ def sequential_test(model, device, loader, model_name, is_seq=True, pvalue=0.7, 
         correct += pred.eq(data.y).sum().item()
         all_predicted = np.append(all_predicted, pred)
         all_labels = np.append(all_labels, data.y)
+        posterior_pr_t = np.append(posterior_pr_t, posterior_pr)
     bayesian_risk = calc_risk(decision_list, label_list, T_list)
     acc = accuracy_score(y_true=label_list, y_pred=decision_list)
     average_deadline = T_sum / n
     print("n: %r, non-converge: %r, acc: %f, T: %r, bayesian_risk: %f" % (n, num_nonconverge, correct / n, average_deadline, bayesian_risk))
-    #print(full_trace_T_sum / n)
-    #print(classification_report(all_labels, all_predicted, zero_division=0.0))
     result = Results(model_name, acc, average_deadline, bayesian_risk)
-    return result, t_correct_all
+    return result, t_correct_all, all_predicted, all_labels, posterior_pr_t, t_logits_all, t_labels_all

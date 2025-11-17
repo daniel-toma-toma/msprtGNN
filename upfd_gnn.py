@@ -25,10 +25,15 @@ class upfdGNN(torch.nn.Module):
 	def reset(self):
 		pass
 
-	def forward(self, data):
+	def forward(self, data, return_logits=False):
 		x, edge_index, batch = data.x, data.edge_index, data.batch
 		edge_attr = None
 		x = F.relu(self.conv1(x, edge_index, edge_attr))
 		x = gmp(x, batch)
-		x = F.log_softmax(self.lin2(x), dim=-1)
+		logits = self.lin2(x)
+		x = F.log_softmax(logits, dim=-1)
 		return x
+		if return_logits:
+			return logits
+		else:
+			return x
