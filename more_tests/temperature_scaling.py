@@ -89,24 +89,19 @@ def temperature_scaling_test(orig_model, valid_loader, device):
     scaled_model.set_temperature(valid_loader, device)
     return scaled_model
 
-def get_ece_from_logits(logits, labels, num_classes):
+def get_ece_from_logits(logits, labels, num_classes, rel_diag_name):
     nll_criterion = nn.CrossEntropyLoss().cuda()
     ece_criterion = _ECELoss(num_classes=num_classes, n_bins=15).cuda()
+    reliabilty_diag_criterion = _ECELoss(num_classes=num_classes, n_bins=10).cuda()
     nll = nll_criterion(logits, labels).item()
     ece = ece_criterion(logits, labels).item()
+    reliabilty_diag_criterion.draw_reliability_graph(logits, labels, rel_diag_name)
     return nll, ece
 
 def get_ece(model, dataset, device, rel_diag_name, labels=None, logits=None):
     model.eval()
-    nll_criterion = nn.CrossEntropyLoss().cuda()
-    ece_criterion = _ECELoss(num_classes=model.num_classes, n_bins=15).cuda()
-    reliabilty_diag_criterion = _ECELoss(num_classes=model.num_classes, n_bins=10).cuda()
     labels, logits = get_full_trace_data(model, dataset, device)
-
-    # get metrics and reliability diagram
-    nll = nll_criterion(logits, labels).item()
-    ece = ece_criterion(logits, labels).item()
-    reliabilty_diag_criterion.draw_reliability_graph(logits, labels, rel_diag_name)
+    nll, ece = get_ece_from_logits(logits, labels, model.num_classes, rel_diag_name)
     return ece, nll
 
 class ModelWithTemperature(nn.Module):
@@ -186,6 +181,83 @@ class _ECELoss(nn.Module):
         self.bin_uppers = self.bin_boundaries[1:]
 
     def draw_reliability_graph(self, logits, labels, name):
+        """Prints the full LaTeX document (generated inside _make_reliability_latex)."""
+        latex_code = self._make_reliability_latex(logits, labels, name)
+        print(latex_code)
+
+    def _make_reliability_latex(self, ece, accs, cfs, bin_centers, width, name):
+        """Returns a *complete* LaTeX document including preamble + reliability diagram."""
+        safe_name = str(name).replace('_', r'\_')
+
+        lines = []
+
+        # -----------------------------------------------------------
+        # LaTeX PREAMBLE **included directly in this function**
+        # -----------------------------------------------------------
+        lines.append(r"\documentclass{article}")
+        lines.append(r"\usepackage[margin=1in]{geometry}")
+        lines.append(r"\usepackage{float} % for H placement")
+        lines.append(r"\usepackage{booktabs}")
+        lines.append(r"\usepackage{tikz}")
+        lines.append(r"\usepackage{pgfplots}")
+        lines.append(r"\pgfplotsset{compat=newest}")
+        lines.append("")
+        lines.append(r"\begin{document}")
+        lines.append("")
+
+        # -----------------------------------------------------------
+        # FIGURE ENVIRONMENT
+        # -----------------------------------------------------------
+        lines.append(r"\begin{figure}[H]")
+        lines.append(r"  \centering")
+        lines.append(r"  \begin{tikzpicture}")
+        lines.append(r"    \begin{axis}[")
+        lines.append(r"      width=8cm,")
+        lines.append(r"      height=8cm,")
+        lines.append(r"      xmin=0, xmax=1.05,")
+        lines.append(r"      ymin=0, ymax=1,")
+        lines.append(r"      grid=both,")
+        lines.append(r"      xlabel={Confidence},")
+        lines.append(r"      ylabel={Accuracy},")
+        lines.append(r"      axis equal image,")
+        lines.append(r"      legend style={at={(0.02,0.98)},anchor=north west,legend columns=1,/tikz/every even column/.append style={column sep=0.5cm}},")
+        lines.append(r"     legend image code/.code={\draw [#1] (0cm,-0.1cm) rectangle (0.2cm,0.25cm); },    ]")
+
+        # Confidence bars
+        lines.append(r"    % Confidence histogram")
+        lines.append(r"    \addplot[ybar,fill=blue,draw=black] coordinates {")
+        for x, y in zip(bin_centers, cfs):
+            lines.append(f"      ({x:.4f},{y:.4f})")
+        lines.append(r"    };")
+
+        # Accuracy bars
+        lines.append(r"    % Accuracy histogram")
+        lines.append(r"    \addplot[ybar,fill=red,draw=black,fill opacity=0.3,pattern=north east lines] coordinates {")
+        for x, y in zip(bin_centers, accs):
+            lines.append(f"      ({x:.4f},{y:.4f})")
+        lines.append(r"    };")
+
+        # Perfect calibration line
+        lines.append(r"    % Perfect calibration line")
+        lines.append(r"    \addplot[dashed] coordinates {(0,0) (1,1)};")
+
+        lines.append(rf" \node[fill=white, draw=black, rounded corners=2pt, above] at (axis cs:0.2,0.7) {{ECE={ece.item():.4f}}}; \legend{{Outputs, Accuracy}}")
+        lines.append(r"    \legend{Confidence,Accuracy}")
+        lines.append(r"    \end{axis}")
+        lines.append(r"  \end{tikzpicture}")
+        lines.append(rf"  \caption{{Reliability diagram for {safe_name}}}")
+        lines.append(r"  \label{fig:reliability}")
+        lines.append(r"\end{figure}")
+
+        # -----------------------------------------------------------
+        # END DOCUMENT
+        # -----------------------------------------------------------
+        lines.append("")
+        lines.append(r"\end{document}")
+
+        return "\n".join(lines)
+
+    def draw_reliability_graph(self, logits, labels, name):
         ece, accs, cfs = self.ece_calc(logits, labels)
         bin_centers = self.bin_lowers + (self.bin_uppers - self.bin_lowers) / 2
         width = self.bin_uppers - self.bin_lowers
@@ -202,6 +274,9 @@ class _ECELoss(nn.Module):
         plt.plot([0, 1], [0, 1], '--', color='gray', linewidth=2)
         plt.gca().set_aspect('equal', adjustable='box')
         plt.savefig('./tmp/calibrated_network_' + name + '.png', bbox_inches='tight')
+        latex_code = self._make_reliability_latex(ece, accs, cfs, bin_centers, width, name)
+        with open('./tmp/calibrated_network_' + name + '.tex', "w") as f:
+            f.write(latex_code)
 
     def ece_calc(self, logits, labels):
         softmaxes = torch.softmax(logits, dim=1)

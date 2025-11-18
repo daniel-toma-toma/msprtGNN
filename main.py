@@ -438,16 +438,14 @@ def main():
             for t in times:
                 logits =  t_logits_all[t]
                 labels = t_labels_all[t].long()
-                nll, ece = get_ece_from_logits(logits, labels, num_classes)
+                nll, ece = get_ece_from_logits(logits, labels, num_classes, dataset+"_"+model_name+"_temp_calib_t" + str(t))
                 ece_per_t[t] = ece
             print(ece_per_t)
-            t_correct_all_dict[model_name] = t_correct_all
-            bayesian_risks[model_name] = result.risk
-            results += [result]
-        print("Model & Accuracy & Average Deadline & Bayesian Risk")
-        for result in results:
-            result.print_bayes_results()
-
+            print("Dataset & t=" + " & ".join(str(t) for t in times))
+            print("\\hline")
+            print(f"\\texttt{{{dataset}}} & " +
+                  " & ".join(f"{ece:.4f}" for ece in ece_per_t.values()) + "\\\\")
+            print("\\hline")
 
 
 if __name__ == '__main__':
